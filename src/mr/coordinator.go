@@ -9,14 +9,14 @@ import "sync"
 
 type Coordinator struct {
 	// Your definitions here.
-	Mu          sync.Mutex
-	TaskType    string
-	MapIndex    int
-	ReduceIndex int
-	Filename    []string
-	ReduceNum   int
-	// AvailableTasks map[string]Task
-	// RunningTasks   map[string]Task
+	Mu             sync.Mutex
+	TaskType       string
+	MapIndex       int
+	ReduceIndex    int
+	Filename       []string
+	ReduceNum      int
+	AvailableTasks []Task
+	RunningTasks   []Task
 }
 
 func (c *Coordinator) ApplyForTask(args *ApplyForTaskArgs, reply *ApplyForTaskReply) error {
@@ -24,22 +24,9 @@ func (c *Coordinator) ApplyForTask(args *ApplyForTaskArgs, reply *ApplyForTaskRe
 	defer c.Mu.Unlock()
 
 	// 判断任务类型
-	if c.MapIndex < len(c.Filename) {
-		*reply = ApplyForTaskReply{
-			TaskType:  "map",
-			TaskIndex: c.MapIndex,
-			Filename:  c.Filename[c.MapIndex],
-			ReduceNum: c.ReduceNum,
-		}
-		c.MapIndex++
-	} else if c.ReduceIndex < 10 {
-		// 如果超出范围，则开始 "reduce" 任务
-		*reply = ApplyForTaskReply{
-			TaskType:  "reduce",
-			TaskIndex: c.ReduceIndex,
-			MapNum:    c.MapIndex,
-		}
-		c.ReduceIndex++
+
+	if len(c.AvailableTasks) != 0 {
+
 	} else {
 		*reply = ApplyForTaskReply{
 			TaskType: "end",
@@ -47,7 +34,34 @@ func (c *Coordinator) ApplyForTask(args *ApplyForTaskArgs, reply *ApplyForTaskRe
 		c.TaskType = "end"
 	}
 
+	// if c.MapIndex < len(c.Filename) {
+	// 	*reply = ApplyForTaskReply{
+	// 		TaskType:  "map",
+	// 		TaskIndex: c.MapIndex,
+	// 		Filename:  c.Filename[c.MapIndex],
+	// 		ReduceNum: c.ReduceNum,
+	// 	}
+	// 	c.MapIndex++
+	// } else if c.ReduceIndex < 10 {
+	// 	// 如果超出范围，则开始 "reduce" 任务
+	// 	*reply = ApplyForTaskReply{
+	// 		TaskType:  "reduce",
+	// 		TaskIndex: c.ReduceIndex,
+	// 		MapNum:    c.MapIndex,
+	// 	}
+	// 	c.ReduceIndex++
+	// } else {
+	// 	*reply = ApplyForTaskReply{
+	// 		TaskType: "end",
+	// 	}
+	// 	c.TaskType = "end"
+	// }
+
 	return nil
+}
+
+func (c *Coordinator) FinishTask(args *ApplyForTaskArgs, reply *ApplyForTaskReply) error {
+
 }
 
 // start a thread that listens for RPCs from worker.go
@@ -77,14 +91,23 @@ func (c *Coordinator) Done() bool { // 判断工作是否完成
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
+	c := Coordinator{
+		MapIndex:       0,
+		ReduceIndex:    0,
+		Filename:       files,
+		ReduceNum:      nReduce,
+		AvailableTasks: make(map[int]Task),
+		RunningTasks:   make(map[int]Task),
+	}
 
-	// Your code here.
-
-	c.MapIndex = 0
-	c.ReduceIndex = 0
-	c.Filename = files
-	c.ReduceNum = nReduce
+	for i, file := range files {
+		task := Task{
+			TaskType: "map",
+			Filename: file,
+			TaskId:   i,
+		}
+		c.AvailableTasks[task.TaskId] = task
+	}
 
 	c.server()
 	return &c

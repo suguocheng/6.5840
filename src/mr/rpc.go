@@ -10,7 +10,7 @@ import "os"
 import "strconv"
 
 type Task struct {
-	TaskType int
+	TaskType string
 	Filename string
 	TaskId   int
 	WorkerId int
