@@ -1,13 +1,16 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
-import "os"
-import "io/ioutil"
-import "strings"
-import "sort"
+import (
+	"fmt"
+	"hash/fnv"
+	"io/ioutil"
+	"log"
+	"net/rpc"
+	"os"
+	"sort"
+	"strings"
+	"time"
+)
 
 // Map functions return a slice of KeyValue.
 type KeyValue struct {
@@ -36,21 +39,29 @@ func Worker(mapf func(string, string) []KeyValue,
 	// 初始化
 	id := os.Getpid()
 	log.Printf("Worker %d started\n", id)
-	args := ApplyForTaskArgs{
-		WorkerId: id,
-	}
-	reply := ApplyForTaskReply{}
+	// args := ApplyForTaskArgs{
+	// 	WorkerId: id,
+	// }
+	// reply := ApplyForTaskReply{}
 
 	for {
+		args := ApplyForTaskArgs{
+			WorkerId: id,
+		}
+		reply := ApplyForTaskReply{}
+
 		// rpc远程调用申请任务
 		ok := call("Coordinator.ApplyForTask", &args, &reply)
 		if !ok {
 			fmt.Printf("call failed!\n")
 		}
 
-		log.Printf("filename = %s\n", reply.Filename)
+		// log.Printf("(Type)reply:%+v", reply)
 
 		if reply.TaskType == "map" {
+			log.Printf("filename = %s\n", reply.Filename)
+			// log.Printf("Mapid = %d\n", reply.TaskId)
+
 			// 打开并读取文件
 			file, err := os.Open(reply.Filename) // 打开文件
 			if err != nil {
@@ -72,7 +83,7 @@ func Worker(mapf func(string, string) []KeyValue,
 
 			// 将中间内容存入文件
 			for i := 0; i < reply.ReduceNum; i++ {
-				MapFile := fmt.Sprintf("mr-%d-%d", reply.TaskIndex, i)
+				MapFile := fmt.Sprintf("mr-%d-%d", reply.TaskId, i)
 				ofile, _ := os.OpenFile(MapFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 				for _, kv := range hashedKva[i] {
 					fmt.Fprintf(ofile, "%v %v\n", kv.Key, kv.Value)
@@ -80,11 +91,24 @@ func Worker(mapf func(string, string) []KeyValue,
 				ofile.Close()
 			}
 
+			// 向协调者rpc通知任务完成
+			args2 := FinishTaskArgs{
+				TaskType: "map",
+				TaskId:   reply.TaskId,
+			}
+			reply2 := FinishTaskReply{}
+			ok := call("Coordinator.FinishTask", &args2, &reply2)
+			if !ok {
+				fmt.Printf("call failed!\n")
+			}
+
 		} else if reply.TaskType == "reduce" {
+			log.Printf("ReduceId = %d\n", reply.TaskId)
+
 			// 打开并读取文件
 			var lines []string
 			for i := 0; i < reply.MapNum; i++ {
-				MapFile := fmt.Sprintf("mr-%d-%d", i, reply.TaskIndex)
+				MapFile := fmt.Sprintf("mr-%d-%d", i, reply.TaskId)
 				file, err := os.Open(MapFile) // 打开文件
 				if err != nil {
 					log.Fatalf("cannot open %v", reply.Filename)
@@ -113,7 +137,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			sort.Sort(ByKey(kva))
 
 			// 创建或打开文件
-			ReduceFile := fmt.Sprintf("mr-out-%d", reply.TaskIndex)
+			ReduceFile := fmt.Sprintf("mr-out-%d", reply.TaskId)
 			var ofile *os.File
 			ofile, _ = os.Create(ReduceFile)
 
@@ -134,12 +158,25 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 			ofile.Close()
 
+			// 向协调者rpc通知任务完成
+			args2 := FinishTaskArgs{
+				TaskType: "reduce",
+				TaskId:   reply.TaskId,
+			}
+			reply2 := FinishTaskReply{}
+			ok := call("Coordinator.FinishTask", &args2, &reply2)
+			if !ok {
+				fmt.Printf("call failed!\n")
+			}
+
+		} else if reply.TaskType == "wait" {
+			time.Sleep(time.Second)
+			continue
 		} else if reply.TaskType == "end" {
 			break
 		}
-
-		log.Printf("Worker %d finished\n", id)
 	}
+	log.Printf("Worker %d finished\n", id)
 }
 
 // example function to show how to make an RPC call to the coordinator.

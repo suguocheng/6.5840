@@ -1,11 +1,15 @@
 package mr
 
-import "log"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
-import "sync"
+import (
+	// "fmt"
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+	"sync"
+	"time"
+)
 
 type Coordinator struct {
 	// Your definitions here.
@@ -14,20 +18,57 @@ type Coordinator struct {
 	MapIndex       int
 	ReduceIndex    int
 	Filename       []string
+	MapNum         int
 	ReduceNum      int
 	AvailableTasks []Task
-	RunningTasks   []Task
+	RunningTasks   map[int]Task
 }
 
 func (c *Coordinator) ApplyForTask(args *ApplyForTaskArgs, reply *ApplyForTaskReply) error {
 	c.Mu.Lock()
 	defer c.Mu.Unlock()
 
-	// 判断任务类型
-
+	// 分配任务
 	if len(c.AvailableTasks) != 0 {
+		if c.AvailableTasks[0].TaskType == "map" {
+			*reply = ApplyForTaskReply{
+				TaskType:  c.AvailableTasks[0].TaskType,
+				TaskId:    c.AvailableTasks[0].TaskId,
+				Filename:  c.AvailableTasks[0].Filename,
+				ReduceNum: c.ReduceNum,
+			}
+			c.AvailableTasks[0].WorkerId = args.WorkerId
+			c.AvailableTasks[0].DeadLine = time.Now().Add(10 * time.Second)
+			c.RunningTasks[c.AvailableTasks[0].TaskId] = c.AvailableTasks[0]
+			if len(c.AvailableTasks) > 1 {
+				c.AvailableTasks = append(c.AvailableTasks[:0], c.AvailableTasks[1:]...)
+			} else {
+				c.AvailableTasks = c.AvailableTasks[:0]
+			}
 
-	} else {
+		} else if c.AvailableTasks[0].TaskType == "reduce" && c.MapIndex == c.MapNum {
+			*reply = ApplyForTaskReply{
+				TaskType: c.AvailableTasks[0].TaskType,
+				TaskId:   c.AvailableTasks[0].TaskId,
+				MapNum:   c.MapNum,
+			}
+			c.AvailableTasks[0].WorkerId = args.WorkerId
+			c.AvailableTasks[0].DeadLine = time.Now().Add(10 * time.Second)
+			c.RunningTasks[c.AvailableTasks[0].TaskId] = c.AvailableTasks[0]
+			if len(c.AvailableTasks) > 1 {
+				c.AvailableTasks = append(c.AvailableTasks[:0], c.AvailableTasks[1:]...)
+			} else {
+				c.AvailableTasks = c.AvailableTasks[:0]
+			}
+
+			// log.Printf("reply = %+v", *reply)
+		} else {
+			*reply = ApplyForTaskReply{
+				TaskType: "wait",
+			}
+		}
+
+	} else if len(c.AvailableTasks) == 0 && len(c.RunningTasks) == 0 {
 		*reply = ApplyForTaskReply{
 			TaskType: "end",
 		}
@@ -57,11 +98,48 @@ func (c *Coordinator) ApplyForTask(args *ApplyForTaskArgs, reply *ApplyForTaskRe
 	// 	c.TaskType = "end"
 	// }
 
+	// 输出调试
+	// fmt.Printf("可用任务队列：\n")
+	// for index, task := range c.AvailableTasks {
+	// 	fmt.Printf("Index: %d, TaskType: %s, Filename: %s, TaskId: %d, WorkerId: %d\n",
+	// 		index, task.TaskType, task.Filename, task.TaskId, task.WorkerId)
+	// }
+
+	// fmt.Printf("正在运行的任务队列：\n")
+	// for taskID, task := range c.RunningTasks {
+	// 	fmt.Printf("TaskID (key): %d, TaskType: %s, Filename: %s, TaskId: %d, WorkerId: %d\n",
+	// 		taskID, task.TaskType, task.Filename, task.TaskId, task.WorkerId)
+	// }
+
+	// log.Printf("reply: %+v", reply)
+
 	return nil
 }
 
-func (c *Coordinator) FinishTask(args *ApplyForTaskArgs, reply *ApplyForTaskReply) error {
+func (c *Coordinator) FinishTask(args *FinishTaskArgs, reply *FinishTaskReply) error {
+	c.Mu.Lock()
+	defer c.Mu.Unlock()
 
+	delete(c.RunningTasks, args.TaskId)
+
+	// if c.MapIndex == c.MapNum-1 {
+	// 	for i := 0; i < c.ReduceNum; i++ {
+	// 		task := Task{
+	// 			TaskType: "reduce",
+	// 			TaskId:   c.ReduceIndex,
+	// 		}
+	// 		c.ReduceIndex++
+	// 		c.AvailableTasks = append(c.AvailableTasks, task)
+	// 	}
+
+	// 	log.Printf("reduce Tasks add availableTasks finish\n")
+	// 	log.Printf("c.AvailableTasks: %+v", c.AvailableTasks)
+	// }
+	if args.TaskType == "map" {
+		c.MapIndex++
+	}
+
+	return nil
 }
 
 // start a thread that listens for RPCs from worker.go
@@ -95,8 +173,9 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		MapIndex:       0,
 		ReduceIndex:    0,
 		Filename:       files,
+		MapNum:         len(files),
 		ReduceNum:      nReduce,
-		AvailableTasks: make(map[int]Task),
+		AvailableTasks: make([]Task, 8),
 		RunningTasks:   make(map[int]Task),
 	}
 
@@ -106,8 +185,37 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 			Filename: file,
 			TaskId:   i,
 		}
-		c.AvailableTasks[task.TaskId] = task
+		c.AvailableTasks[i] = task
 	}
+
+	for i := 0; i < c.ReduceNum; i++ {
+		task := Task{
+			TaskType: "reduce",
+			TaskId:   c.ReduceIndex,
+		}
+		c.ReduceIndex++
+		c.AvailableTasks = append(c.AvailableTasks, task)
+	}
+
+	go func() {
+		for {
+			time.Sleep(500 * time.Millisecond)
+
+			c.Mu.Lock()
+			for key, RunningTask := range c.RunningTasks {
+				if RunningTask.WorkerId != 0 && time.Now().After(RunningTask.DeadLine) {
+					// 回收并重新分配
+					log.Printf(
+						"Found timed-out %s task %d previously running on worker %d. Prepare to re-assign",
+						RunningTask.TaskType, RunningTask.TaskId, RunningTask.WorkerId)
+					RunningTask.WorkerId = 0
+					c.AvailableTasks = append([]Task{RunningTask}, c.AvailableTasks...)
+					delete(c.RunningTasks, key)
+				}
+			}
+			c.Mu.Unlock()
+		}
+	}()
 
 	c.server()
 	return &c

@@ -8,12 +8,14 @@ package mr
 
 import "os"
 import "strconv"
+import "time"
 
 type Task struct {
 	TaskType string
 	Filename string
 	TaskId   int
 	WorkerId int
+	DeadLine time.Time
 }
 
 // Add your RPC definitions here.
@@ -24,10 +26,18 @@ type ApplyForTaskArgs struct {
 
 type ApplyForTaskReply struct {
 	TaskType  string
-	TaskIndex int
+	TaskId    int
 	Filename  string
 	MapNum    int
 	ReduceNum int
+}
+
+type FinishTaskArgs struct {
+	TaskType string
+	TaskId   int
+}
+
+type FinishTaskReply struct {
 }
 
 // Cook up a unique-ish UNIX-domain socket name
