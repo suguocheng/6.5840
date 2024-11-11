@@ -3,7 +3,7 @@ package kvsrv
 import "6.5840/labrpc"
 import "crypto/rand"
 import "math/big"
-
+import "fmt"
 
 type Clerk struct {
 	server *labrpc.ClientEnd
@@ -31,13 +31,22 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 // you can send an RPC with code like this:
 // ok := ck.server.Call("KVServer.Get", &args, &reply)
 //
-// the types of args and reply (including whether they are pointers)
-// must match the declared types of the RPC handler function's
-// arguments. and reply must be passed as a pointer.
+// the types of args and reply (including whether they are pointers)must match the declared types of the RPC handler function'sarguments. and reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) string {
 
 	// You will have to modify this function.
-	return ""
+
+	args := GetArgs{
+		Key: key,
+	}
+	reply := GetReply{}
+
+	ok := ck.server.Call("KVServer.Get", &args, &reply)
+	if !ok {
+		fmt.Printf("call failed!\n")
+	}
+
+	return reply.Value
 }
 
 // shared by Put and Append.
@@ -50,7 +59,27 @@ func (ck *Clerk) Get(key string) string {
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) PutAppend(key string, value string, op string) string {
 	// You will have to modify this function.
-	return ""
+
+	args := PutAppendArgs{
+		Key:   key,
+		Value: value,
+		Op:    op,
+	}
+	reply := PutAppendReply{}
+
+	if args.Op == "Put" {
+		ok := ck.server.Call("KVServer.Put", &args, &reply)
+		if !ok {
+			fmt.Printf("call failed!\n")
+		}
+	} else {
+		ok := ck.server.Call("KVServer.Append", &args, &reply)
+		if !ok {
+			fmt.Printf("call failed!\n")
+		}
+	}
+
+	return reply.Value
 }
 
 func (ck *Clerk) Put(key string, value string) {
