@@ -4,10 +4,14 @@ import "6.5840/labrpc"
 import "crypto/rand"
 import "math/big"
 import "fmt"
+import "os"
+import "sync"
 
 type Clerk struct {
-	server *labrpc.ClientEnd
-	// You will have to modify this struct.
+	server   *labrpc.ClientEnd
+	Mu       sync.Mutex
+	ClientId int
+	TaskId   int
 }
 
 func nrand() int64 {
@@ -20,7 +24,8 @@ func nrand() int64 {
 func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.server = server
-	// You'll have to add code here.
+	ck.ClientId = os.Getpid()
+	ck.TaskId = 0
 	return ck
 }
 
@@ -33,18 +38,23 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 //
 // the types of args and reply (including whether they are pointers)must match the declared types of the RPC handler function'sarguments. and reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) string {
-
-	// You will have to modify this function.
+	ck.Mu.Lock()
+	defer ck.Mu.Unlock()
 
 	args := GetArgs{
-		Key: key,
+		Key:      key,
+		ClientId: ck.ClientId,
+		TaskId:   ck.TaskId,
 	}
+
 	reply := GetReply{}
 
 	ok := ck.server.Call("KVServer.Get", &args, &reply)
 	if !ok {
 		fmt.Printf("call failed!\n")
 	}
+
+	ck.TaskId++
 
 	return reply.Value
 }
@@ -58,12 +68,15 @@ func (ck *Clerk) Get(key string) string {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) PutAppend(key string, value string, op string) string {
-	// You will have to modify this function.
+	ck.Mu.Lock()
+	defer ck.Mu.Unlock()
 
 	args := PutAppendArgs{
-		Key:   key,
-		Value: value,
-		Op:    op,
+		Key:      key,
+		Value:    value,
+		Op:       op,
+		ClientId: ck.ClientId,
+		TaskId:   ck.TaskId,
 	}
 	reply := PutAppendReply{}
 
@@ -78,6 +91,8 @@ func (ck *Clerk) PutAppend(key string, value string, op string) string {
 			fmt.Printf("call failed!\n")
 		}
 	}
+
+	ck.TaskId++
 
 	return reply.Value
 }
