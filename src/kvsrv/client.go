@@ -3,15 +3,12 @@ package kvsrv
 import "6.5840/labrpc"
 import "crypto/rand"
 import "math/big"
-import "fmt"
-import "os"
 import "sync"
 
 type Clerk struct {
-	server   *labrpc.ClientEnd
-	Mu       sync.Mutex
-	ClientId int
-	TaskId   int
+	server *labrpc.ClientEnd
+	Mu     sync.Mutex
+	TaskId int64
 }
 
 func nrand() int64 {
@@ -24,8 +21,6 @@ func nrand() int64 {
 func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.server = server
-	ck.ClientId = os.Getpid()
-	ck.TaskId = 0
 	return ck
 }
 
@@ -42,19 +37,12 @@ func (ck *Clerk) Get(key string) string {
 	defer ck.Mu.Unlock()
 
 	args := GetArgs{
-		Key:      key,
-		ClientId: ck.ClientId,
-		TaskId:   ck.TaskId,
+		Key: key,
 	}
-
 	reply := GetReply{}
 
-	ok := ck.server.Call("KVServer.Get", &args, &reply)
-	if !ok {
-		fmt.Printf("call failed!\n")
+	for !ck.server.Call("KVServer.Get", &args, &reply) {
 	}
-
-	ck.TaskId++
 
 	return reply.Value
 }
@@ -71,28 +59,17 @@ func (ck *Clerk) PutAppend(key string, value string, op string) string {
 	ck.Mu.Lock()
 	defer ck.Mu.Unlock()
 
+	ck.TaskId = nrand()
+
 	args := PutAppendArgs{
-		Key:      key,
-		Value:    value,
-		Op:       op,
-		ClientId: ck.ClientId,
-		TaskId:   ck.TaskId,
+		Key:    key,
+		Value:  value,
+		TaskId: ck.TaskId,
 	}
 	reply := PutAppendReply{}
 
-	if args.Op == "Put" {
-		ok := ck.server.Call("KVServer.Put", &args, &reply)
-		if !ok {
-			fmt.Printf("call failed!\n")
-		}
-	} else {
-		ok := ck.server.Call("KVServer.Append", &args, &reply)
-		if !ok {
-			fmt.Printf("call failed!\n")
-		}
+	for !ck.server.Call("KVServer."+op, &args, &reply) {
 	}
-
-	ck.TaskId++
 
 	return reply.Value
 }
