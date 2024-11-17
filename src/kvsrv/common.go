@@ -2,9 +2,10 @@ package kvsrv
 
 // Put or Append
 type PutAppendArgs struct {
-	Key    string
-	Value  string
-	TaskId int64
+	Key      string
+	Value    string
+	TaskId   int64
+	TaskType string
 }
 
 type PutAppendReply struct {

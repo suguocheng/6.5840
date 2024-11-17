@@ -71,6 +71,17 @@ func (ck *Clerk) PutAppend(key string, value string, op string) string {
 	for !ck.server.Call("KVServer."+op, &args, &reply) {
 	}
 
+	// 通知服务器删除数据
+	if op == "Append" {
+		args = PutAppendArgs{
+			TaskType: "notify",
+			TaskId:   ck.TaskId,
+		}
+
+		for !ck.server.Call("KVServer.Append", &args, &reply) {
+		}
+	}
+
 	return reply.Value
 }
 

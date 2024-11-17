@@ -117,6 +117,10 @@ func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
 	} else {
 		reply.Value = kv.EndedTasks[args.TaskId]
 	}
+
+	if args.TaskType == "notify" {
+		delete(kv.EndedTasks, args.TaskId)
+	}
 }
 
 func StartKVServer() *KVServer {
