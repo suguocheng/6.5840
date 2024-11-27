@@ -67,16 +67,16 @@ type Raft struct {
 	// Your data here (3A, 3B, 3C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-	currentTerm    int
-	voteFor        int
-	logs           []Log
-	commitIndex    int
-	lastApplied    int
-	state          string
-	nextIndex      []int
-	matchIndex     []int
-	electionTimer  *time.Timer
-	heartbeatTimer *time.Timer
+	currentTerm int
+	voteFor     int
+	logs        []Log
+	commitIndex int
+	lastApplied int
+	state       string
+	nextIndex   []int
+	matchIndex  []int
+	// electionTimer  *time.Timer
+	// heartbeatTimer *time.Timer
 }
 
 // return currentTerm and whether this server
@@ -138,21 +138,23 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // field names must start with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (3A, 3B).
-	term   int
-	peerId int
+	Term        int
+	CandidateId int
 }
 
 // example RequestVote RPC reply structure.
 // field names must start with capital letters!
 type RequestVoteReply struct {
 	// Your data here (3A).
+	Term       int
+	TermResult bool
 }
 
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (3A, 3B).
-	if args.term > rf.currentTerm {
-		rf.voteFor = args.peerId
+	if args.Term > rf.currentTerm {
+		rf.voteFor = args.CandidateId
 	}
 }
 
@@ -231,14 +233,9 @@ func (rf *Raft) killed() bool {
 
 func (rf *Raft) ticker() {
 	for !rf.killed() {
-		select {
-		case <-rf.electionTimer.C:
-
-		case <-rf.heartbeatTimer.C:
-
-		}
 		// Your code here (3A)
 		// Check if a leader election should be started.
+
 		_, isleader := rf.GetState()
 		if isleader {
 			continue
@@ -250,6 +247,7 @@ func (rf *Raft) ticker() {
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 
 		rf.voteFor = rf.me
+		voteCount := 1
 		for index := range rf.peers {
 			if index == rf.me {
 				continue
@@ -264,6 +262,11 @@ func (rf *Raft) ticker() {
 		}
 	}
 }
+
+// func randomInRange(min, max int) int {
+// 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+// 	return r.Intn(max-min) + min
+// }
 
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
@@ -290,8 +293,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	rf.state = "Follower"
-	rf.electionTimer = time.NewTimer(time.Duration(1000) * time.Millisecond)
-	rf.heartbeatTimer = time.NewTimer(time.Duration(1000) * time.Millisecond)
+	// rf.electionTimer = time.NewTimer(time.Duration(randomInRange(1000, 2000)) * time.Millisecond)
+	// rf.heartbeatTimer = time.NewTimer(time.Duration(1000) * time.Millisecond)
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
