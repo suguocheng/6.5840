@@ -67,16 +67,16 @@ type Raft struct {
 	// Your data here (3A, 3B, 3C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-	currentTerm int
-	voteFor     int
-	logs        []Log
-	commitIndex int
-	lastApplied int
-	state       string
-	nextIndex   []int
-	matchIndex  []int
-	// electionTimer  *time.Timer
-	// heartbeatTimer *time.Timer
+	currentTerm    int
+	voteFor        int
+	logs           []Log
+	commitIndex    int
+	lastApplied    int
+	state          string
+	nextIndex      []int
+	matchIndex     []int
+	electionTimer  *time.Timer
+	heartbeatTimer *time.Timer
 }
 
 // return currentTerm and whether this server
@@ -155,6 +155,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (3A, 3B).
 	if args.Term > rf.currentTerm {
 		rf.voteFor = args.CandidateId
+		reply.TermResult = true
+	} else {
+		reply.TermResult = false
+		reply.Term = rf.currentTerm
 	}
 }
 
@@ -235,38 +239,58 @@ func (rf *Raft) ticker() {
 	for !rf.killed() {
 		// Your code here (3A)
 		// Check if a leader election should be started.
+		// ms := 50 + (rand.Int63() % 300)
+		// time.Sleep(time.Duration(ms) * time.Millisecond)
+		select {
+		case <-rf.electionTimer.C:
+			rf.currentTerm++
+			rf.state = "Candidate"
+			rf.voteFor = rf.me
+			voteCount := 1
+			for index := range rf.peers {
+				if index == rf.me {
+					continue
+				}
+				args := RequestVoteArgs{
+					Term:        rf.currentTerm,
+					CandidateId: rf.me,
+				}
+				reply := RequestVoteReply{}
 
-		_, isleader := rf.GetState()
-		if isleader {
-			continue
+				rf.sendRequestVote(index, &args, &reply)
+
+				if reply.TermResult {
+					voteCount++
+					if voteCount > len(rf.peers)/2 {
+						rf.state = "Leader"
+						rf.electionTimer.Stop()
+						rf.heartbeatTimer.Reset(time.Duration(1000) * time.Millisecond)
+					}
+				} else {
+					rf.currentTerm--
+					rf.state = "Follower"
+					rf.voteFor = -1
+					break
+				}
+			}
+			rf.electionTimer.Reset(time.Duration(randomInRange(1000, 2000)) * time.Millisecond)
+		case <-rf.heartbeatTimer.C:
+			if rf.state == "Leader" {
+
+			}
 		}
 
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
 		ms := 50 + (rand.Int63() % 300)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
-
-		rf.voteFor = rf.me
-		voteCount := 1
-		for index := range rf.peers {
-			if index == rf.me {
-				continue
-			}
-			args := RequestVoteArgs{
-				term:   rf.currentTerm,
-				peerId: rf.me,
-			}
-			reply := RequestVoteReply{}
-
-			rf.sendRequestVote(index, &args, &reply)
-		}
 	}
 }
 
-// func randomInRange(min, max int) int {
-// 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-// 	return r.Intn(max-min) + min
-// }
+func randomInRange(min, max int) int {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	return r.Intn(max-min) + min
+}
 
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
@@ -293,8 +317,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	rf.state = "Follower"
-	// rf.electionTimer = time.NewTimer(time.Duration(randomInRange(1000, 2000)) * time.Millisecond)
-	// rf.heartbeatTimer = time.NewTimer(time.Duration(1000) * time.Millisecond)
+	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(1000, 2000)) * time.Millisecond)
+	rf.heartbeatTimer = time.NewTimer(time.Duration(1000) * time.Millisecond)
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
