@@ -150,6 +150,14 @@ type RequestVoteReply struct {
 	TermResult bool
 }
 
+// heartbeat args,reply
+type AppendEntriesArgs struct {
+	Type string
+}
+
+type AppendEntriesReply struct {
+}
+
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (3A, 3B).
@@ -159,6 +167,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	} else {
 		reply.TermResult = false
 		reply.Term = rf.currentTerm
+	}
+}
+
+// heartbeat
+func (rf *Raft) Heartbeat(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	if args.Type == "Heartbeat" {
+		rf.heartbeatTimer.Reset(time.Duration(1000) * time.Millisecond)
 	}
 }
 
@@ -276,7 +291,16 @@ func (rf *Raft) ticker() {
 			rf.electionTimer.Reset(time.Duration(randomInRange(1000, 2000)) * time.Millisecond)
 		case <-rf.heartbeatTimer.C:
 			if rf.state == "Leader" {
-
+				for index := range rf.peers {
+					args := AppendEntriesArgs{
+						Type: "Heartbeat",
+					}
+					reply := AppendEntriesReply{}
+					rf.peers[index].Call("Raft.Heartbeat", args, reply)
+				}
+			} else {
+				rf.heartbeatTimer.Stop()
+				rf.electionTimer.Reset(time.Duration(randomInRange(1000, 2000)) * time.Millisecond)
 			}
 		}
 
