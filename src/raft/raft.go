@@ -38,7 +38,7 @@ import (
 // snapshots) on the applyCh, but set CommandValid to false for these
 // other uses.
 
-type Log struct {
+type LogEntry struct {
 	Command interface{}
 	Term    int
 	Index   int
@@ -69,7 +69,7 @@ type Raft struct {
 	// state a Raft server must maintain.
 	currentTerm    int
 	voteFor        int
-	logs           []Log
+	logs           []LogEntry
 	commitIndex    int
 	lastApplied    int
 	state          string
@@ -140,40 +140,60 @@ type RequestVoteArgs struct {
 	// Your data here (3A, 3B).
 	Term        int
 	CandidateId int
+	LastLogInex int
+	LastLogTerm int
 }
 
 // example RequestVote RPC reply structure.
 // field names must start with capital letters!
 type RequestVoteReply struct {
 	// Your data here (3A).
-	Term       int
-	TermResult bool
+	Term        int
+	VoteGranted bool
 }
 
 // heartbeat args,reply
 type AppendEntriesArgs struct {
-	Type string
+	Term         int
+	LeaderId     int
+	PrevLogIndex int
+	PrevLogTerm  int
+	LeaderCommit int
+	Entries      []LogEntry
 }
 
 type AppendEntriesReply struct {
+	Term    int
+	Success bool
 }
 
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	// Your code here (3A, 3B).
 	if args.Term > rf.currentTerm {
+		if rf.state == "Candidate" {
+			rf.currentTerm--
+			rf.state = "Follower"
+		}
 		rf.voteFor = args.CandidateId
-		reply.TermResult = true
+		reply.VoteGranted = true
 	} else {
-		reply.TermResult = false
-		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
+		return
 	}
 }
 
 // heartbeat
 func (rf *Raft) Heartbeat(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	if args.Type == "Heartbeat" {
-		rf.heartbeatTimer.Reset(time.Duration(1000) * time.Millisecond)
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.heartbeatTimer.Reset(time.Duration(1000) * time.Millisecond)
+	if args.Term > rf.currentTerm || rf.state == "Candidate" {
+		rf.currentTerm--
+		rf.state = "Follower"
+		rf.voteFor = -1
 	}
 }
 
@@ -274,12 +294,20 @@ func (rf *Raft) ticker() {
 
 				rf.sendRequestVote(index, &args, &reply)
 
-				if reply.TermResult {
+				if reply.VoteGranted {
 					voteCount++
 					if voteCount > len(rf.peers)/2 {
 						rf.state = "Leader"
 						rf.electionTimer.Stop()
+						for index := range rf.peers {
+							args := AppendEntriesArgs{
+								Term: rf.currentTerm,
+							}
+							reply := AppendEntriesReply{}
+							rf.peers[index].Call("Raft.Heartbeat", &args, &reply)
+						}
 						rf.heartbeatTimer.Reset(time.Duration(1000) * time.Millisecond)
+						break
 					}
 				} else {
 					rf.currentTerm--
@@ -293,21 +321,18 @@ func (rf *Raft) ticker() {
 			if rf.state == "Leader" {
 				for index := range rf.peers {
 					args := AppendEntriesArgs{
-						Type: "Heartbeat",
+						Term: rf.currentTerm,
 					}
 					reply := AppendEntriesReply{}
-					rf.peers[index].Call("Raft.Heartbeat", args, reply)
+					rf.peers[index].Call("Raft.Heartbeat", &args, &reply)
 				}
-			} else {
-				rf.heartbeatTimer.Stop()
-				rf.electionTimer.Reset(time.Duration(randomInRange(1000, 2000)) * time.Millisecond)
 			}
 		}
 
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
-		ms := 50 + (rand.Int63() % 300)
-		time.Sleep(time.Duration(ms) * time.Millisecond)
+		// ms := 50 + (rand.Int63() % 300)
+		// time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
 }
 
@@ -335,7 +360,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// Your initialization code here (3A, 3B, 3C).
 	rf.currentTerm = 0
 	rf.voteFor = -1
-	rf.logs = make([]Log, 1)
+	rf.logs = make([]LogEntry, 1)
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, len(peers))
@@ -343,6 +368,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.state = "Follower"
 	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(1000, 2000)) * time.Millisecond)
 	rf.heartbeatTimer = time.NewTimer(time.Duration(1000) * time.Millisecond)
+	rf.heartbeatTimer.Stop()
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
