@@ -134,126 +134,6 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 
 }
 
-// example RequestVote RPC arguments structure.
-// field names must start with capital letters!
-type RequestVoteArgs struct {
-	// Your data here (3A, 3B).
-	Term         int
-	CandidateId  int
-	LastLogIndex int
-	LastLogTerm  int
-}
-
-// example RequestVote RPC reply structure.
-// field names must start with capital letters!
-type RequestVoteReply struct {
-	// Your data here (3A).
-	Term        int
-	VoteGranted bool
-}
-
-// heartbeat args,reply
-type AppendEntriesArgs struct {
-	Term         int
-	LeaderId     int
-	PrevLogIndex int
-	PrevLogTerm  int
-	LeaderCommit int
-	Entries      []LogEntry
-}
-
-type AppendEntriesReply struct {
-	Term    int
-	Success bool
-}
-
-func (rf *Raft) isLogUpToDate(candidateLastIndex int, candidateLastTerm int) bool {
-	lastIndex := rf.logs[len(rf.logs)-1].Index // 当前节点的最后一个日志索引
-	lastTerm := rf.logs[len(rf.logs)-1].Term   // 当前节点的最后一个日志任期
-
-	// 比较日志条目任期
-	if candidateLastTerm > lastTerm {
-		return true
-	}
-
-	// 如果日志条目任期相同，则比较索引
-	if candidateLastTerm == lastTerm && candidateLastIndex >= lastIndex {
-		return true
-	}
-
-	return false
-}
-
-// example RequestVote RPC handler.
-func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	// Your code here (3A, 3B).
-	if args.Term > rf.currentTerm {
-		rf.currentTerm = args.Term
-		rf.voteFor = -1
-		rf.state = "Follower"
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
-
-		reply.Term = rf.currentTerm
-		if rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
-			rf.voteFor = args.CandidateId
-			reply.VoteGranted = true
-		} else {
-			reply.VoteGranted = false
-		}
-	} else if args.Term == rf.currentTerm && rf.voteFor != -1 {
-
-	} else {
-		reply.Term = rf.currentTerm
-		reply.VoteGranted = false
-	}
-}
-
-// heartbeat
-func (rf *Raft) Heartbeat(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	if args.Term >= rf.currentTerm {
-		rf.currentTerm = args.Term
-		rf.voteFor = -1
-		rf.state = "Follower"
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
-	}
-}
-
-// example code to send a RequestVote RPC to a server.
-// server is the index of the target server in rf.peers[].
-// expects RPC arguments in args.
-// fills in *reply with RPC reply, so caller should
-// pass &reply.
-// the types of the args and reply passed to Call() must be
-// the same as the types of the arguments declared in the
-// handler function (including whether they are pointers).
-//
-// The labrpc package simulates a lossy network, in which servers
-// may be unreachable, and in which requests and replies may be lost.
-// Call() sends a request and waits for a reply. If a reply arrives
-// within a timeout interval, Call() returns true; otherwise
-// Call() returns false. Thus Call() may not return for a while.
-// A false return can be caused by a dead server, a live server that
-// can't be reached, a lost request, or a lost reply.
-//
-// Call() is guaranteed to return (perhaps after a delay) *except* if the
-// handler function on the server side does not return.  Thus there
-// is no need to implement your own timeouts around Call().
-//
-// look at the comments in ../labrpc/labrpc.go for more details.
-//
-// if you're having trouble getting RPC to work, check that you've
-// capitalized all field names in structs passed over RPC, and
-// that the caller passes the address of the reply struct with &, not
-// the struct itself.
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	return ok
-}
-
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
 // server isn't the leader, returns false. otherwise start the
@@ -266,12 +146,29 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 // if it's ever committed. the second return value is the current
 // term. the third return value is true if this server believes it is
 // the leader.
+
+// 使用Raft的服务（例如k/v服务器）想要开始对下一个要追加到Raft日志的命令达成一致。
+// 如果该服务器不是领导者，返回false。否则，立即开始达成一致并返回。
+// 无法保证此命令将被提交到Raft日志，因为领导者可能会失败或输掉选举。即使Raft实例已被终止，该函数也应优雅地返回。
+
+// 第一个返回值是命令将显示的索引，如果它被提交过。第二个返回值是当前的任期。第三个返回值如果这个服务器认为它是领导者，则为真。
+
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
+	index := rf.commitIndex + 1
+	term, isLeader := rf.GetState()
 
 	// Your code here (3B).
+
+	if isLeader {
+		log := LogEntry{}
+		log = LogEntry{
+			Command: command,
+			Term:    term,
+			Index:   index,
+		}
+		rf.logs = append(rf.logs, log)
+
+	}
 
 	return index, term, isLeader
 }
@@ -343,15 +240,15 @@ func (rf *Raft) startElection() {
 			LastLogTerm:  rf.logs[len(rf.logs)-1].Term,
 		}
 		go func(i int) {
-			if rf.state != "Candidate" || rf.currentTerm != args.Term {
+			if rf.state != "Candidate" {
 				// 如果当前节点状态不再是候选者或任期已更新，则停止操作
 				return
 			}
 			reply := RequestVoteReply{}
 			rf.sendRequestVote(i, &args, &reply)
 
-			// rf.mu.Lock()
-			// defer rf.mu.Unlock()
+			rf.mu.Lock()
+			defer rf.mu.Unlock()
 
 			if reply.VoteGranted {
 				voteCount++
@@ -373,16 +270,18 @@ func (rf *Raft) startElection() {
 }
 
 func (rf *Raft) broadcastHeartbeat() {
-	args := AppendEntriesArgs{
-		Term: rf.currentTerm,
-	}
-	for index := range rf.peers {
-		if index == rf.me {
-			continue
+	go func() {
+		args := AppendEntriesArgs{
+			Term: rf.currentTerm,
 		}
-		reply := AppendEntriesReply{}
-		rf.peers[index].Call("Raft.Heartbeat", &args, &reply)
-	}
+		for index := range rf.peers {
+			if index == rf.me {
+				continue
+			}
+			reply := AppendEntriesReply{}
+			rf.peers[index].Call("Raft.Heartbeat", &args, &reply)
+		}
+	}()
 }
 
 func randomInRange(min, max int) int {
