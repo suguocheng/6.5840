@@ -160,17 +160,37 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// Your code here (3B).
 
 	if isLeader {
-		log := LogEntry{}
-		log = LogEntry{
+		alog := LogEntry{
 			Command: command,
 			Term:    term,
 			Index:   index,
 		}
-		rf.logs = append(rf.logs, log)
+		rf.logs = append(rf.logs, alog)
+		rf.nextIndex[rf.me] = index + 1
+		rf.matchIndex[rf.me] = index
 
 	}
 
 	return index, term, isLeader
+}
+
+func (rf *Raft) broadcastAppendEntries(prevLogIndex int) {
+	go func() {
+		args := AppendEntriesArgs{
+			Term:         rf.currentTerm,
+			LeaderId:     rf.me,
+			PrevLogIndex: prevLogIndex,
+			PrevLogTerm:  rf.logs[prevLogIndex].Term,
+			Entries:      rf.logs[:prevLogIndex+1],
+		}
+		for index := range rf.peers {
+			if index == rf.me {
+				continue
+			}
+			reply := AppendEntriesReply{}
+			rf.peers[index].Call("Raft.Heartbeat", &args, &reply)
+		}
+	}()
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,

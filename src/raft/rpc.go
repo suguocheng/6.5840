@@ -131,9 +131,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if args.Term >= rf.currentTerm {
-		reply.Success = true
 
+		reply.Term = rf.currentTerm
+		reply.Success = true
 	} else {
+		reply.Term = rf.currentTerm
 		reply.Success = false
 	}
 }
