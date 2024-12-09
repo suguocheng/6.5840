@@ -131,6 +131,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if args.Term >= rf.currentTerm {
+		rf.currentTerm = args.Term
+		rf.voteFor = -1
+		rf.state = "Follower"
+
+		rf.logs = append(rf.logs, args.Entries...)
 
 		reply.Term = rf.currentTerm
 		reply.Success = true

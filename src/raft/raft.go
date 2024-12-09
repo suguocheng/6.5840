@@ -182,6 +182,7 @@ func (rf *Raft) broadcastAppendEntries(prevLogIndex int) {
 			PrevLogIndex: prevLogIndex,
 			PrevLogTerm:  rf.logs[prevLogIndex].Term,
 			Entries:      rf.logs[:prevLogIndex+1],
+			LeaderCommit: rf.commitIndex,
 		}
 		for index := range rf.peers {
 			if index == rf.me {
