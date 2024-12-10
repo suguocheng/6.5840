@@ -41,7 +41,7 @@ import (
 type LogEntry struct {
 	Command interface{}
 	Term    int
-	Index   int
+	// Index   int
 }
 
 type ApplyMsg struct {
@@ -163,7 +163,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		alog := LogEntry{
 			Command: command,
 			Term:    term,
-			Index:   index,
+			// Index:   index,
 		}
 		rf.logs = append(rf.logs, alog)
 		rf.nextIndex[rf.me] = index + 1
@@ -257,7 +257,7 @@ func (rf *Raft) startElection() {
 		args := RequestVoteArgs{
 			Term:         rf.currentTerm,
 			CandidateId:  rf.me,
-			LastLogIndex: rf.logs[len(rf.logs)-1].Index,
+			LastLogIndex: len(rf.logs) - 1,
 			LastLogTerm:  rf.logs[len(rf.logs)-1].Term,
 		}
 		go func(i int) {
