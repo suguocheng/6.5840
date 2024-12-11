@@ -38,8 +38,8 @@ type AppendEntriesReply struct {
 }
 
 func (rf *Raft) isLogUpToDate(candidateLastIndex int, candidateLastTerm int) bool {
-	lastIndex := len(rf.logs) - 1            // 当前节点的最后一个日志索引
-	lastTerm := rf.logs[len(rf.logs)-1].Term // 当前节点的最后一个日志任期
+	lastIndex := rf.logs[len(rf.logs)-1].Index // 当前节点的最后一个日志索引
+	lastTerm := rf.logs[len(rf.logs)-1].Term   // 当前节点的最后一个日志任期
 
 	// 比较日志条目任期
 	if candidateLastTerm > lastTerm {
@@ -135,6 +135,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.voteFor = -1
 		rf.state = "Follower"
 
+		if args.PrevLogTerm != rf.logs[args.PrevLogIndex].Term && args.PrevLogIndex != 0 {
+			reply.Term = rf.currentTerm
+			reply.Success = false
+			return
+		}
+		rf.logs = rf.logs[:args.PrevLogIndex+1]
+		args.Entries = args.Entries[args.PrevLogIndex+1:]
 		rf.logs = append(rf.logs, args.Entries...)
 
 		reply.Term = rf.currentTerm

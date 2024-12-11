@@ -41,7 +41,7 @@ import (
 type LogEntry struct {
 	Command interface{}
 	Term    int
-	// Index   int
+	Index   int
 }
 
 type ApplyMsg struct {
@@ -163,35 +163,55 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		alog := LogEntry{
 			Command: command,
 			Term:    term,
-			// Index:   index,
+			Index:   index,
 		}
 		rf.logs = append(rf.logs, alog)
 		rf.nextIndex[rf.me] = index + 1
 		rf.matchIndex[rf.me] = index
+		rf.broadcastAppendEntries()
 
 	}
 
 	return index, term, isLeader
 }
 
-func (rf *Raft) broadcastAppendEntries(prevLogIndex int) {
-	go func() {
-		args := AppendEntriesArgs{
-			Term:         rf.currentTerm,
-			LeaderId:     rf.me,
-			PrevLogIndex: prevLogIndex,
-			PrevLogTerm:  rf.logs[prevLogIndex].Term,
-			Entries:      rf.logs[:prevLogIndex+1],
-			LeaderCommit: rf.commitIndex,
-		}
-		for index := range rf.peers {
-			if index == rf.me {
-				continue
+func (rf *Raft) broadcastAppendEntries() {
+	replicateCount := 1
+	for index := range rf.peers {
+		go func(i int) {
+			if i == rf.me {
+				return
+			}
+			args := AppendEntriesArgs{
+				Term:         rf.currentTerm,
+				LeaderId:     rf.me,
+				PrevLogIndex: rf.matchIndex[i],
+				PrevLogTerm:  rf.logs[rf.nextIndex[i]-1].Term,
+				Entries:      rf.logs[:rf.nextIndex[i]],
+				LeaderCommit: rf.commitIndex,
 			}
 			reply := AppendEntriesReply{}
-			rf.peers[index].Call("Raft.Heartbeat", &args, &reply)
-		}
-	}()
+
+			for !rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
+				if args.Term >= reply.Term {
+					rf.nextIndex[i]--
+					args.PrevLogIndex = rf.nextIndex[i] - 1
+					args.PrevLogTerm = rf.logs[rf.nextIndex[i]-1].Term
+				} else {
+					return
+				}
+			}
+
+			if reply.Success {
+				rf.nextIndex[i]++
+				rf.matchIndex[i] = rf.nextIndex[i] - 1
+				replicateCount++
+				if replicateCount > len(rf.peers)/2 {
+					rf.commitIndex++ // 这里改变rf.commitIndex可能会导致后面的RPC有问题
+				}
+			}
+		}(index)
+	}
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -250,19 +270,18 @@ func (rf *Raft) startElection() {
 	rf.state = "Candidate"
 	rf.voteFor = rf.me
 	voteCount := 1
+	args := RequestVoteArgs{
+		Term:         rf.currentTerm,
+		CandidateId:  rf.me,
+		LastLogIndex: rf.logs[len(rf.logs)-1].Index,
+		LastLogTerm:  rf.logs[len(rf.logs)-1].Term,
+	}
 	for index := range rf.peers {
 		if index == rf.me {
 			continue
 		}
-		args := RequestVoteArgs{
-			Term:         rf.currentTerm,
-			CandidateId:  rf.me,
-			LastLogIndex: len(rf.logs) - 1,
-			LastLogTerm:  rf.logs[len(rf.logs)-1].Term,
-		}
 		go func(i int) {
 			if rf.state != "Candidate" {
-				// 如果当前节点状态不再是候选者或任期已更新，则停止操作
 				return
 			}
 			reply := RequestVoteReply{}
@@ -278,6 +297,9 @@ func (rf *Raft) startElection() {
 					rf.broadcastHeartbeat()
 					rf.electionTimer.Stop()
 					resetTimer(rf.heartbeatTimer, time.Duration(200)*time.Millisecond)
+					for index := range rf.nextIndex {
+						rf.nextIndex[index] = rf.commitIndex + 1
+					}
 				}
 			} else {
 				if reply.Term > rf.currentTerm {
