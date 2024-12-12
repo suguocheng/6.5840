@@ -19,7 +19,6 @@ package raft
 
 import (
 	//	"bytes"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,6 +46,7 @@ type LogEntry struct {
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
+	CommandTerm  int
 	CommandIndex int
 
 	// For 3D:
@@ -77,6 +77,8 @@ type Raft struct {
 	matchIndex     []int
 	electionTimer  *time.Timer
 	heartbeatTimer *time.Timer
+	applyCh        chan ApplyMsg
+	applyCond      *sync.Cond
 }
 
 // return currentTerm and whether this server
@@ -168,14 +170,14 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.logs = append(rf.logs, alog)
 		rf.nextIndex[rf.me] = index + 1
 		rf.matchIndex[rf.me] = index
-		rf.broadcastAppendEntries()
+		rf.broadcastAppendEntries(rf.commitIndex)
 
 	}
 
 	return index, term, isLeader
 }
 
-func (rf *Raft) broadcastAppendEntries() {
+func (rf *Raft) broadcastAppendEntries(commitIndex int) {
 	replicateCount := 1
 	for index := range rf.peers {
 		go func(i int) {
@@ -185,10 +187,10 @@ func (rf *Raft) broadcastAppendEntries() {
 			args := AppendEntriesArgs{
 				Term:         rf.currentTerm,
 				LeaderId:     rf.me,
-				PrevLogIndex: rf.matchIndex[i],
+				PrevLogIndex: rf.nextIndex[i] - 1,
 				PrevLogTerm:  rf.logs[rf.nextIndex[i]-1].Term,
 				Entries:      rf.logs[:rf.nextIndex[i]],
-				LeaderCommit: rf.commitIndex,
+				LeaderCommit: commitIndex,
 			}
 			reply := AppendEntriesReply{}
 
@@ -207,10 +209,43 @@ func (rf *Raft) broadcastAppendEntries() {
 				rf.matchIndex[i] = rf.nextIndex[i] - 1
 				replicateCount++
 				if replicateCount > len(rf.peers)/2 {
-					rf.commitIndex++ // 这里改变rf.commitIndex可能会导致后面的RPC有问题
+					rf.commitIndex++
 				}
 			}
 		}(index)
+	}
+}
+
+func (rf *Raft) applier() {
+	for !rf.killed() {
+		time.Sleep(10 * time.Millisecond)
+
+		if rf.lastApplied >= rf.commitIndex {
+			continue
+		}
+
+		rf.mu.Lock()
+		commitIndex, lastApplied := rf.commitIndex, rf.lastApplied
+		startIndex := lastApplied + 1
+		endIndex := commitIndex + 1
+		if endIndex > len(rf.logs) {
+			endIndex = len(rf.logs)
+		}
+		entries := make([]LogEntry, endIndex-startIndex)
+		copy(entries, rf.logs[startIndex:endIndex])
+		rf.mu.Unlock()
+
+		for _, entry := range entries {
+			rf.applyCh <- ApplyMsg{
+				CommandValid: true,
+				Command:      entry.Command,
+				CommandIndex: entry.Index,
+				CommandTerm:  entry.Term,
+			}
+		}
+		rf.mu.Lock()
+		rf.lastApplied = Max(rf.lastApplied, commitIndex)
+		rf.mu.Unlock()
 	}
 }
 
@@ -297,8 +332,13 @@ func (rf *Raft) startElection() {
 					rf.broadcastHeartbeat()
 					rf.electionTimer.Stop()
 					resetTimer(rf.heartbeatTimer, time.Duration(200)*time.Millisecond)
+
+					// 初始化nextIndex和matchIndex
 					for index := range rf.nextIndex {
 						rf.nextIndex[index] = rf.commitIndex + 1
+					}
+					for index := range rf.matchIndex {
+						rf.matchIndex[index] = 0
 					}
 				}
 			} else {
@@ -325,24 +365,6 @@ func (rf *Raft) broadcastHeartbeat() {
 			rf.peers[index].Call("Raft.Heartbeat", &args, &reply)
 		}
 	}()
-}
-
-func randomInRange(min, max int) int {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	return r.Intn(max-min) + min
-}
-
-func resetTimer(t *time.Timer, d time.Duration) {
-	if !t.Stop() {
-		// 如果Stop返回false，计时器可能已经过期但没有被读，清理通道
-		select {
-		case <-t.C:
-			// 消费过期的信号防止通道堵塞
-		default:
-			// 通道里没有信号，不做任何处理
-		}
-	}
-	t.Reset(d)
 }
 
 // the service or tester wants to create a Raft server. the ports
@@ -372,13 +394,15 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.state = "Follower"
 	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(500, 1000)) * time.Millisecond)
 	rf.heartbeatTimer = time.NewTimer(time.Duration(200) * time.Millisecond)
-	// rf.heartbeatTimer.Stop()
+	rf.applyCh = applyCh
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
+
+	go rf.applier()
 
 	return rf
 }

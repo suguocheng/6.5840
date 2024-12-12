@@ -37,23 +37,6 @@ type AppendEntriesReply struct {
 	Success bool
 }
 
-func (rf *Raft) isLogUpToDate(candidateLastIndex int, candidateLastTerm int) bool {
-	lastIndex := rf.logs[len(rf.logs)-1].Index // 当前节点的最后一个日志索引
-	lastTerm := rf.logs[len(rf.logs)-1].Term   // 当前节点的最后一个日志任期
-
-	// 比较日志条目任期
-	if candidateLastTerm > lastTerm {
-		return true
-	}
-
-	// 如果日志条目任期相同，则比较索引
-	if candidateLastTerm == lastTerm && candidateLastIndex >= lastIndex {
-		return true
-	}
-
-	return false
-}
-
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
@@ -135,14 +118,22 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.voteFor = -1
 		rf.state = "Follower"
 
+		// 比较日志
 		if args.PrevLogTerm != rf.logs[args.PrevLogIndex].Term && args.PrevLogIndex != 0 {
 			reply.Term = rf.currentTerm
 			reply.Success = false
 			return
 		}
+
+		// 复制日志
 		rf.logs = rf.logs[:args.PrevLogIndex+1]
 		args.Entries = args.Entries[args.PrevLogIndex+1:]
 		rf.logs = append(rf.logs, args.Entries...)
+
+		// 更新commitIndex
+		if args.LeaderCommit > rf.commitIndex {
+			rf.commitIndex = Min(args.LeaderCommit, len(rf.logs)+1)
+		}
 
 		reply.Term = rf.currentTerm
 		reply.Success = true
