@@ -219,7 +219,6 @@ func (rf *Raft) broadcastAppendEntries(commitIndex int) {
 func (rf *Raft) applier() {
 	for !rf.killed() {
 		time.Sleep(10 * time.Millisecond)
-
 		if rf.lastApplied >= rf.commitIndex {
 			continue
 		}
