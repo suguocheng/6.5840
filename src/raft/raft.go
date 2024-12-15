@@ -86,6 +86,7 @@ type Raft struct {
 func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
 	return rf.currentTerm, rf.state == "Leader"
 }
 
@@ -156,69 +157,113 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // 第一个返回值是命令将显示的索引，如果它被提交过。第二个返回值是当前的任期。第三个返回值如果这个服务器认为它是领导者，则为真。
 
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := rf.commitIndex + 1
+
+	index := len(rf.logs)
 	term, isLeader := rf.GetState()
+	DPrintf("server %d, Term %d, Starting command: %v", rf.me, term, command)
 
 	// Your code here (3B).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
 	if isLeader {
-		alog := LogEntry{
+		rf.logs = append(rf.logs, LogEntry{
 			Command: command,
 			Term:    term,
 			Index:   index,
-		}
-		rf.logs = append(rf.logs, alog)
+		})
 		rf.nextIndex[rf.me] = index + 1
 		rf.matchIndex[rf.me] = index
-		rf.broadcastAppendEntries(rf.commitIndex)
-
+		DPrintf("Leader %d, Term %d, Appended log: Index=%d, Command=%v", rf.me, term, index, command)
+		go rf.broadcastAppendEntries()
+	} else {
+		DPrintf("Not a leader, returning")
 	}
 
 	return index, term, isLeader
 }
 
-func (rf *Raft) broadcastAppendEntries(commitIndex int) {
+func (rf *Raft) broadcastAppendEntries() {
+	rf.mu.Lock()
+	term := rf.currentTerm
+	commitIndex := rf.commitIndex
 	replicateCount := 1
+	DPrintf("Leader %d broadcasting AppendEntries, Term %d", rf.me, rf.currentTerm)
+	rf.mu.Unlock()
+
 	for index := range rf.peers {
 		go func(i int) {
 			if i == rf.me {
 				return
 			}
+
+			rf.mu.Lock()
 			args := AppendEntriesArgs{
-				Term:         rf.currentTerm,
+				Term:         term,
 				LeaderId:     rf.me,
 				PrevLogIndex: rf.nextIndex[i] - 1,
 				PrevLogTerm:  rf.logs[rf.nextIndex[i]-1].Term,
 				Entries:      rf.logs[:rf.nextIndex[i]],
 				LeaderCommit: commitIndex,
 			}
+			rf.mu.Unlock()
+			DPrintf("Leader %d sending AppendEntries to Follower %d: PrevLogIndex=%d, Entries=%v",
+				rf.me, i, args.PrevLogIndex, args.Entries)
 			reply := AppendEntriesReply{}
 
 			for !rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
-				if args.Term >= reply.Term {
-					rf.nextIndex[i]--
-					args.PrevLogIndex = rf.nextIndex[i] - 1
-					args.PrevLogTerm = rf.logs[rf.nextIndex[i]-1].Term
-				} else {
-					return
-				}
+				rf.handleAppendEntriesReply(i, &args, &reply, replicateCount)
 			}
 
-			if reply.Success {
-				rf.nextIndex[i]++
-				rf.matchIndex[i] = rf.nextIndex[i] - 1
-				replicateCount++
-				if replicateCount > len(rf.peers)/2 {
-					rf.commitIndex++
-				}
-			}
 		}(index)
+	}
+}
+
+func (rf *Raft) handleAppendEntriesReply(server int, args *AppendEntriesArgs, reply *AppendEntriesReply, replicateCount int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if reply.Term > rf.currentTerm {
+		DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, server, reply.Term)
+		rf.currentTerm = reply.Term
+		rf.state = "Follower"
+		rf.voteFor = -1
+		return
+	}
+
+	if reply.Success {
+		DPrintf("Follower %d successfully replicated log, nextIndex=%d", server, rf.nextIndex[server])
+		rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
+		rf.nextIndex[server] = rf.matchIndex[server] + 1
+		replicateCount++
+		if replicateCount > len(rf.peers)/2 {
+			rf.commitIndex++
+		}
+	} else {
+		DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", server, rf.nextIndex[server]-1)
+		rf.nextIndex[server]--
+		args.PrevLogIndex = rf.nextIndex[server] - 1
+		args.PrevLogTerm = rf.logs[rf.nextIndex[server]-1].Term
+	}
+}
+
+func (rf *Raft) applyLogs() {
+	DPrintf("Leader %d applying logs up to commitIndex=%d", rf.me, rf.commitIndex)
+	for rf.lastApplied < rf.commitIndex {
+		rf.lastApplied++
+		entry := rf.logs[rf.lastApplied]
+		DPrintf("Applying log: Index=%d, Command=%v", entry.Index, entry.Command)
+		rf.applyCh <- ApplyMsg{
+			CommandValid: true,
+			Command:      entry.Command,
+			CommandIndex: entry.Index,
+			CommandTerm:  entry.Term,
+		}
 	}
 }
 
 func (rf *Raft) applier() {
 	for !rf.killed() {
-		time.Sleep(10 * time.Millisecond)
 		if rf.lastApplied >= rf.commitIndex {
 			continue
 		}
@@ -234,7 +279,10 @@ func (rf *Raft) applier() {
 		copy(entries, rf.logs[startIndex:endIndex])
 		rf.mu.Unlock()
 
+		DPrintf("applier: Applying logs from index %d to %d", startIndex, endIndex-1)
+
 		for _, entry := range entries {
+			DPrintf("applier: Applying log: Index=%d, Command=%v", entry.Index, entry.Command)
 			rf.applyCh <- ApplyMsg{
 				CommandValid: true,
 				Command:      entry.Command,
@@ -245,6 +293,9 @@ func (rf *Raft) applier() {
 		rf.mu.Lock()
 		rf.lastApplied = Max(rf.lastApplied, commitIndex)
 		rf.mu.Unlock()
+
+		DPrintf("applier: Finished applying logs up to commitIndex=%d", rf.commitIndex)
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

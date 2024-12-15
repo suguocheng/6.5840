@@ -55,8 +55,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		} else {
 			reply.VoteGranted = false
 		}
-	} else if args.Term == rf.currentTerm && rf.voteFor != -1 {
-
 	} else {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
@@ -113,13 +111,19 @@ func (rf *Raft) Heartbeat(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
+	DPrintf("Follower %d received AppendEntries: PrevLogIndex=%d, PrevLogTerm=%d, Entries=%v",
+		rf.me, args.PrevLogIndex, args.PrevLogTerm, args.Entries)
+
 	if args.Term >= rf.currentTerm {
+		DPrintf("Follower %d term %d is outdated, switching to follower", rf.me, args.Term)
 		rf.currentTerm = args.Term
 		rf.voteFor = -1
 		rf.state = "Follower"
 
 		// 比较日志
-		if args.PrevLogTerm != rf.logs[args.PrevLogIndex].Term && args.PrevLogIndex != 0 {
+		if args.PrevLogIndex >= len(rf.logs) || (args.PrevLogIndex >= 0 && rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm) {
+			DPrintf("Follower %d log mismatch: PrevLogIndex=%d, PrevLogTerm=%d", rf.me, args.PrevLogIndex, args.PrevLogTerm)
 			reply.Term = rf.currentTerm
 			reply.Success = false
 			return
@@ -134,6 +138,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if args.LeaderCommit > rf.commitIndex {
 			rf.commitIndex = Min(args.LeaderCommit, len(rf.logs)+1)
 		}
+
+		DPrintf("Follower %d successfully appended logs. New commitIndex=%d", rf.me, rf.commitIndex)
 
 		reply.Term = rf.currentTerm
 		reply.Success = true
