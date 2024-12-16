@@ -101,6 +101,12 @@ func (rf *Raft) Heartbeat(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 		rf.currentTerm = args.Term
 		rf.voteFor = -1
 		rf.state = "Follower"
+
+		if args.LeaderCommit > rf.commitIndex {
+			rf.commitIndex = Min(args.LeaderCommit, len(rf.logs)-1)
+			DPrintf("Follower %d successfully appended logs. New commitIndex=%d", rf.me, rf.commitIndex)
+		}
+
 		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 		reply.Success = true
 	} else {
@@ -131,12 +137,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 		// 复制日志
 		rf.logs = rf.logs[:args.PrevLogIndex+1]
-		args.Entries = args.Entries[args.PrevLogIndex+1:]
 		rf.logs = append(rf.logs, args.Entries...)
+
+		DPrintf("Follower %d copy successed: Entries=%v",
+			rf.me, rf.logs)
 
 		// 更新commitIndex
 		if args.LeaderCommit > rf.commitIndex {
-			rf.commitIndex = Min(args.LeaderCommit, len(rf.logs)+1)
+			rf.commitIndex = Min(args.LeaderCommit, len(rf.logs)-1)
 		}
 
 		DPrintf("Follower %d successfully appended logs. New commitIndex=%d", rf.me, rf.commitIndex)

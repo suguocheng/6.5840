@@ -187,7 +187,6 @@ func (rf *Raft) broadcastAppendEntries() {
 	rf.mu.Lock()
 	term := rf.currentTerm
 	commitIndex := rf.commitIndex
-	replicateCount := 1
 	DPrintf("Leader %d broadcasting AppendEntries, Term %d", rf.me, rf.currentTerm)
 	rf.mu.Unlock()
 
@@ -203,7 +202,7 @@ func (rf *Raft) broadcastAppendEntries() {
 				LeaderId:     rf.me,
 				PrevLogIndex: rf.nextIndex[i] - 1,
 				PrevLogTerm:  rf.logs[rf.nextIndex[i]-1].Term,
-				Entries:      rf.logs[:rf.nextIndex[i]],
+				Entries:      rf.logs[rf.nextIndex[i]:],
 				LeaderCommit: commitIndex,
 			}
 			rf.mu.Unlock()
@@ -212,14 +211,14 @@ func (rf *Raft) broadcastAppendEntries() {
 			reply := AppendEntriesReply{}
 
 			for !rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
-				rf.handleAppendEntriesReply(i, &args, &reply, replicateCount)
+				rf.handleAppendEntriesReply(i, &args, &reply)
 			}
 
 		}(index)
 	}
 }
 
-func (rf *Raft) handleAppendEntriesReply(server int, args *AppendEntriesArgs, reply *AppendEntriesReply, replicateCount int) {
+func (rf *Raft) handleAppendEntriesReply(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -235,15 +234,27 @@ func (rf *Raft) handleAppendEntriesReply(server int, args *AppendEntriesArgs, re
 		DPrintf("Follower %d successfully replicated log, nextIndex=%d", server, rf.nextIndex[server])
 		rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
 		rf.nextIndex[server] = rf.matchIndex[server] + 1
-		replicateCount++
-		if replicateCount > len(rf.peers)/2 {
-			rf.commitIndex++
-		}
+		rf.updateCommitIndex()
 	} else {
 		DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", server, rf.nextIndex[server]-1)
-		rf.nextIndex[server]--
-		args.PrevLogIndex = rf.nextIndex[server] - 1
-		args.PrevLogTerm = rf.logs[rf.nextIndex[server]-1].Term
+		if rf.nextIndex[server] > 1 {
+			rf.nextIndex[server]--
+		}
+	}
+}
+
+func (rf *Raft) updateCommitIndex() {
+	for i := len(rf.logs) - 1; i > rf.commitIndex; i-- {
+		count := 1 // 包括自己
+		for j := range rf.peers {
+			if rf.matchIndex[j] >= i {
+				count++
+			}
+		}
+		if count > len(rf.peers)/2 && rf.logs[i].Term == rf.currentTerm {
+			rf.commitIndex = i
+			break
+		}
 	}
 }
 
@@ -405,7 +416,8 @@ func (rf *Raft) startElection() {
 func (rf *Raft) broadcastHeartbeat() {
 	go func() {
 		args := AppendEntriesArgs{
-			Term: rf.currentTerm,
+			Term:         rf.currentTerm,
+			LeaderCommit: rf.commitIndex,
 		}
 		for index := range rf.peers {
 			if index == rf.me {
