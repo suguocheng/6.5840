@@ -187,31 +187,42 @@ func (rf *Raft) broadcastAppendEntries() {
 	rf.mu.Lock()
 	term := rf.currentTerm
 	commitIndex := rf.commitIndex
+	// replicateCount := 1
 	DPrintf("Leader %d broadcasting AppendEntries, Term %d", rf.me, rf.currentTerm)
 	rf.mu.Unlock()
 
 	for index := range rf.peers {
+		if index == rf.me {
+			continue
+		}
 		go func(i int) {
-			if i == rf.me {
-				return
-			}
+			for {
+				if rf.state != "Leader" {
+					return
+				}
 
-			rf.mu.Lock()
-			args := AppendEntriesArgs{
-				Term:         term,
-				LeaderId:     rf.me,
-				PrevLogIndex: rf.nextIndex[i] - 1,
-				PrevLogTerm:  rf.logs[rf.nextIndex[i]-1].Term,
-				Entries:      rf.logs[rf.nextIndex[i]:],
-				LeaderCommit: commitIndex,
-			}
-			rf.mu.Unlock()
-			DPrintf("Leader %d sending AppendEntries to Follower %d: PrevLogIndex=%d, Entries=%v",
-				rf.me, i, args.PrevLogIndex, args.Entries)
-			reply := AppendEntriesReply{}
+				rf.mu.Lock()
+				args := AppendEntriesArgs{
+					Term:         term,
+					LeaderId:     rf.me,
+					PrevLogIndex: rf.nextIndex[i] - 1,
+					PrevLogTerm:  rf.logs[rf.nextIndex[i]-1].Term,
+					Entries:      rf.logs[rf.nextIndex[i]:],
+					LeaderCommit: commitIndex,
+				}
+				rf.mu.Unlock()
 
-			for !rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
-				rf.handleAppendEntriesReply(i, &args, &reply)
+				DPrintf("Leader %d sending AppendEntries to Follower %d: PrevLogIndex=%d, Entries=%v",
+					rf.me, i, args.PrevLogIndex, args.Entries)
+
+				reply := AppendEntriesReply{}
+
+				if rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
+					rf.handleAppendEntriesReply(i, &args, &reply)
+					return
+				}
+
+				time.Sleep(10 * time.Millisecond)
 			}
 
 		}(index)
@@ -235,6 +246,7 @@ func (rf *Raft) handleAppendEntriesReply(server int, args *AppendEntriesArgs, re
 		rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
 		rf.nextIndex[server] = rf.matchIndex[server] + 1
 		rf.updateCommitIndex()
+
 	} else {
 		DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", server, rf.nextIndex[server]-1)
 		if rf.nextIndex[server] > 1 {
@@ -424,7 +436,7 @@ func (rf *Raft) broadcastHeartbeat() {
 				continue
 			}
 			reply := AppendEntriesReply{}
-			rf.peers[index].Call("Raft.Heartbeat", &args, &reply)
+			rf.peers[index].Call("Raft.AppendEntries", &args, &reply)
 		}
 	}()
 }

@@ -94,32 +94,32 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 // heartbeat
-func (rf *Raft) Heartbeat(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	if args.Term >= rf.currentTerm {
-		rf.currentTerm = args.Term
-		rf.voteFor = -1
-		rf.state = "Follower"
+// func (rf *Raft) Heartbeat(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+// 	rf.mu.Lock()
+// 	defer rf.mu.Unlock()
+// 	if args.Term >= rf.currentTerm {
+// 		rf.currentTerm = args.Term
+// 		rf.voteFor = -1
+// 		rf.state = "Follower"
 
-		if args.LeaderCommit > rf.commitIndex {
-			rf.commitIndex = Min(args.LeaderCommit, len(rf.logs)-1)
-			DPrintf("Follower %d successfully appended logs. New commitIndex=%d", rf.me, rf.commitIndex)
-		}
+// 		if args.LeaderCommit > rf.commitIndex {
+// 			rf.commitIndex = Min(args.LeaderCommit, len(rf.logs)-1)
+// 			DPrintf("Follower %d successfully appended logs. New commitIndex=%d", rf.me, rf.commitIndex)
+// 		}
 
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
-		reply.Success = true
-	} else {
-		reply.Success = false
-	}
-}
+// 		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+// 		reply.Success = true
+// 	} else {
+// 		reply.Success = false
+// 	}
+// }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	DPrintf("Follower %d received AppendEntries: PrevLogIndex=%d, PrevLogTerm=%d, Entries=%v",
-		rf.me, args.PrevLogIndex, args.PrevLogTerm, args.Entries)
+	DPrintf("Follower %d received AppendEntries: PrevLogIndex=%d, PrevLogTerm=%d, Entries=%v, commitIndex=%d",
+		rf.me, args.PrevLogIndex, args.PrevLogTerm, args.Entries, args.LeaderCommit)
 
 	if args.Term >= rf.currentTerm {
 		DPrintf("Follower %d term %d is outdated, switching to follower", rf.me, args.Term)
@@ -136,18 +136,21 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 
 		// 复制日志
-		rf.logs = rf.logs[:args.PrevLogIndex+1]
-		rf.logs = append(rf.logs, args.Entries...)
+		if args.Entries != nil {
+			rf.logs = rf.logs[:args.PrevLogIndex+1]
+			rf.logs = append(rf.logs, args.Entries...)
 
-		DPrintf("Follower %d copy successed: Entries=%v",
-			rf.me, rf.logs)
+			DPrintf("Follower %d copy successed: Entries=%v",
+				rf.me, rf.logs)
+		}
 
 		// 更新commitIndex
 		if args.LeaderCommit > rf.commitIndex {
 			rf.commitIndex = Min(args.LeaderCommit, len(rf.logs)-1)
+			DPrintf("Follower %d successfully appended logs. New commitIndex=%d", rf.me, rf.commitIndex)
 		}
 
-		DPrintf("Follower %d successfully appended logs. New commitIndex=%d", rf.me, rf.commitIndex)
+		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 
 		reply.Term = rf.currentTerm
 		reply.Success = true
