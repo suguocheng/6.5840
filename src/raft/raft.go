@@ -187,7 +187,6 @@ func (rf *Raft) broadcastAppendEntries() {
 	rf.mu.Lock()
 	term := rf.currentTerm
 	commitIndex := rf.commitIndex
-	// replicateCount := 1
 	DPrintf("Leader %d broadcasting AppendEntries, Term %d", rf.me, rf.currentTerm)
 	rf.mu.Unlock()
 
@@ -218,42 +217,59 @@ func (rf *Raft) broadcastAppendEntries() {
 				reply := AppendEntriesReply{}
 
 				if rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
-					rf.handleAppendEntriesReply(i, &args, &reply)
-					return
-				}
+					rf.mu.Lock()
+					defer rf.mu.Unlock()
 
-				time.Sleep(10 * time.Millisecond)
+					if reply.Term > rf.currentTerm {
+						DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, i, reply.Term)
+						rf.currentTerm = reply.Term
+						rf.state = "Follower"
+						rf.voteFor = -1
+						return
+					}
+
+					if reply.Success {
+						DPrintf("Follower %d successfully replicated log, nextIndex=%d", i, rf.nextIndex[i])
+						rf.matchIndex[i] = args.PrevLogIndex + len(args.Entries)
+						rf.nextIndex[i] = rf.matchIndex[i] + 1
+						rf.updateCommitIndex()
+						return
+					} else {
+						DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", i, rf.nextIndex[i]-1)
+						if rf.nextIndex[i] > 1 {
+							rf.nextIndex[i]--
+						}
+						time.Sleep(10 * time.Millisecond)
+					}
+				}
 			}
 
 		}(index)
 	}
 }
 
-func (rf *Raft) handleAppendEntriesReply(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+// func (rf *Raft) handleAppendEntriesReply(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) {
+// 	if reply.Term > rf.currentTerm {
+// 		DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, server, reply.Term)
+// 		rf.currentTerm = reply.Term
+// 		rf.state = "Follower"
+// 		rf.voteFor = -1
+// 		return
+// 	}
 
-	if reply.Term > rf.currentTerm {
-		DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, server, reply.Term)
-		rf.currentTerm = reply.Term
-		rf.state = "Follower"
-		rf.voteFor = -1
-		return
-	}
+// 	if reply.Success {
+// 		DPrintf("Follower %d successfully replicated log, nextIndex=%d", server, rf.nextIndex[server])
+// 		rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
+// 		rf.nextIndex[server] = rf.matchIndex[server] + 1
+// 		rf.updateCommitIndex()
 
-	if reply.Success {
-		DPrintf("Follower %d successfully replicated log, nextIndex=%d", server, rf.nextIndex[server])
-		rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
-		rf.nextIndex[server] = rf.matchIndex[server] + 1
-		rf.updateCommitIndex()
-
-	} else {
-		DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", server, rf.nextIndex[server]-1)
-		if rf.nextIndex[server] > 1 {
-			rf.nextIndex[server]--
-		}
-	}
-}
+// 	} else {
+// 		DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", server, rf.nextIndex[server]-1)
+// 		if rf.nextIndex[server] > 1 {
+// 			rf.nextIndex[server]--
+// 		}
+// 	}
+// }
 
 func (rf *Raft) updateCommitIndex() {
 	for i := len(rf.logs) - 1; i > rf.commitIndex; i-- {
@@ -266,21 +282,6 @@ func (rf *Raft) updateCommitIndex() {
 		if count > len(rf.peers)/2 && rf.logs[i].Term == rf.currentTerm {
 			rf.commitIndex = i
 			break
-		}
-	}
-}
-
-func (rf *Raft) applyLogs() {
-	DPrintf("Leader %d applying logs up to commitIndex=%d", rf.me, rf.commitIndex)
-	for rf.lastApplied < rf.commitIndex {
-		rf.lastApplied++
-		entry := rf.logs[rf.lastApplied]
-		DPrintf("Applying log: Index=%d, Command=%v", entry.Index, entry.Command)
-		rf.applyCh <- ApplyMsg{
-			CommandValid: true,
-			Command:      entry.Command,
-			CommandIndex: entry.Index,
-			CommandTerm:  entry.Term,
 		}
 	}
 }
@@ -347,6 +348,7 @@ func (rf *Raft) ticker() {
 		// Check if a leader election should be started.
 		if rf.state != "Leader" {
 			rf.heartbeatTimer.Stop()
+			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 		}
 
 		select {
@@ -426,19 +428,20 @@ func (rf *Raft) startElection() {
 }
 
 func (rf *Raft) broadcastHeartbeat() {
-	go func() {
-		args := AppendEntriesArgs{
-			Term:         rf.currentTerm,
-			LeaderCommit: rf.commitIndex,
+	args := AppendEntriesArgs{
+		Term:         rf.currentTerm,
+		LeaderCommit: rf.commitIndex,
+	}
+
+	for index := range rf.peers {
+		if index == rf.me {
+			continue
 		}
-		for index := range rf.peers {
-			if index == rf.me {
-				continue
-			}
+		go func(i int) {
 			reply := AppendEntriesReply{}
-			rf.peers[index].Call("Raft.AppendEntries", &args, &reply)
-		}
-	}()
+			rf.peers[i].Call("Raft.AppendEntries", &args, &reply)
+		}(index)
+	}
 }
 
 // the service or tester wants to create a Raft server. the ports
