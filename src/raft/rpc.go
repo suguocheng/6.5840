@@ -49,10 +49,19 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 
 		reply.Term = rf.currentTerm
+		reply.VoteGranted = true
+	} else if args.Term == rf.currentTerm && rf.voteFor == -1 {
 		if rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
+			rf.currentTerm = args.Term
+			rf.voteFor = -1
+			rf.state = "Follower"
+			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+
 			rf.voteFor = args.CandidateId
+			reply.Term = rf.currentTerm
 			reply.VoteGranted = true
 		} else {
+			reply.Term = rf.currentTerm
 			reply.VoteGranted = false
 		}
 	} else {
@@ -118,8 +127,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	DPrintf("Follower %d received AppendEntries: PrevLogIndex=%d, PrevLogTerm=%d, Entries=%v, commitIndex=%d",
-		rf.me, args.PrevLogIndex, args.PrevLogTerm, args.Entries, args.LeaderCommit)
+	DPrintf("Follower %d received Leader %d AppendEntries: PrevLogIndex=%d, PrevLogTerm=%d, Entries=%v, commitIndex=%d",
+		rf.me, args.LeaderId, args.PrevLogIndex, args.PrevLogTerm, args.Entries, args.LeaderCommit)
 
 	if args.Term >= rf.currentTerm {
 		DPrintf("Follower %d term %d is outdated, switching to follower", rf.me, args.Term)
@@ -147,7 +156,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// 更新commitIndex
 		if args.LeaderCommit > rf.commitIndex {
 			rf.commitIndex = Min(args.LeaderCommit, len(rf.logs)-1)
-			DPrintf("Follower %d successfully appended logs. New commitIndex=%d", rf.me, rf.commitIndex)
+			DPrintf("Follower %d successfully update commitIndex. New commitIndex=%d", rf.me, rf.commitIndex)
 		}
 
 		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
