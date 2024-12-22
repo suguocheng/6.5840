@@ -425,6 +425,10 @@ func (rf *Raft) startElection() {
 						rf.currentTerm = reply.Term
 						rf.state = "Follower"
 						rf.voteFor = -1
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+					} else {
+						rf.state = "Follower"
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 					}
 				}
 			}
@@ -440,6 +444,7 @@ func (rf *Raft) startElection() {
 func (rf *Raft) broadcastHeartbeat() {
 	args := AppendEntriesArgs{
 		Term:         rf.currentTerm,
+		LeaderId:     rf.me,
 		LeaderCommit: rf.commitIndex,
 	}
 

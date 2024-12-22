@@ -52,12 +52,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = true
 	} else if args.Term == rf.currentTerm && rf.voteFor == -1 {
 		if rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
-			rf.currentTerm = args.Term
-			rf.voteFor = -1
+			rf.voteFor = args.CandidateId
 			rf.state = "Follower"
 			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 
-			rf.voteFor = args.CandidateId
 			reply.Term = rf.currentTerm
 			reply.VoteGranted = true
 		} else {
@@ -137,7 +135,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.state = "Follower"
 
 		// 比较日志
-		if args.PrevLogIndex >= len(rf.logs) || (args.PrevLogIndex >= 0 && rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm) {
+		if args.PrevLogIndex >= len(rf.logs) || rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
 			DPrintf("Follower %d log mismatch: PrevLogIndex=%d, PrevLogTerm=%d", rf.me, args.PrevLogIndex, args.PrevLogTerm)
 			reply.Term = rf.currentTerm
 			reply.Success = false
