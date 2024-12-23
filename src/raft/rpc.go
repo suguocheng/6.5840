@@ -43,13 +43,19 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	defer rf.mu.Unlock()
 	// Your code here (3A, 3B).
 	if args.Term > rf.currentTerm {
-		rf.currentTerm = args.Term
-		rf.voteFor = -1
-		rf.state = "Follower"
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+		if rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
+			rf.currentTerm = args.Term
+			rf.voteFor = -1
+			rf.state = "Follower"
+			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 
-		reply.Term = rf.currentTerm
-		reply.VoteGranted = true
+			reply.Term = rf.currentTerm
+			reply.VoteGranted = true
+		} else {
+			reply.Term = rf.currentTerm
+			reply.VoteGranted = false
+		}
+
 	} else if args.Term == rf.currentTerm && rf.voteFor == -1 {
 		if rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
 			rf.voteFor = args.CandidateId
