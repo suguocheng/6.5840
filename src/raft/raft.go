@@ -278,12 +278,17 @@ func (rf *Raft) updateCommitIndex() {
 	for i := len(rf.logs) - 1; i > rf.commitIndex; i-- {
 		count := 1 // 包括自己
 		for j := range rf.peers {
+			if j == rf.me {
+				continue
+			}
 			if rf.matchIndex[j] >= i {
+				// DPrintf("ID=%d, matchIndex=%d", j, rf.matchIndex[j])
 				count++
 			}
 		}
 		if count > len(rf.peers)/2 && rf.logs[i].Term == rf.currentTerm {
 			rf.commitIndex = i
+			DPrintf("Leader %d successfully update commitIndex. New commitIndex=%d", rf.me, rf.commitIndex)
 			break
 		}
 	}
@@ -351,7 +356,8 @@ func (rf *Raft) ticker() {
 		// Check if a leader election should be started.
 		if rf.state != "Leader" {
 			rf.heartbeatTimer.Stop()
-			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+		} else {
+			rf.electionTimer.Stop()
 		}
 
 		select {
@@ -380,6 +386,7 @@ func (rf *Raft) ticker() {
 }
 
 func (rf *Raft) startElection() {
+	DPrintf("Server %d start election", rf.me)
 	rf.currentTerm++
 	rf.state = "Candidate"
 	rf.voteFor = rf.me
@@ -428,6 +435,7 @@ func (rf *Raft) startElection() {
 						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 					} else {
 						rf.state = "Follower"
+						rf.voteFor = -1
 						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 					}
 				}
@@ -442,18 +450,21 @@ func (rf *Raft) startElection() {
 }
 
 func (rf *Raft) broadcastHeartbeat() {
-	args := AppendEntriesArgs{
-		Term:         rf.currentTerm,
-		LeaderId:     rf.me,
-		LeaderCommit: rf.commitIndex,
-	}
-
+	DPrintf("Leader %d broadcasting Heartbeat, Term %d", rf.me, rf.currentTerm)
 	for index := range rf.peers {
 		if index == rf.me {
 			continue
 		}
 		go func(i int) {
+			args := AppendEntriesArgs{
+				Term:         rf.currentTerm,
+				LeaderId:     rf.me,
+				PrevLogIndex: rf.nextIndex[i] - 1,
+				PrevLogTerm:  rf.logs[rf.nextIndex[i]-1].Term,
+				LeaderCommit: rf.commitIndex,
+			}
 			reply := AppendEntriesReply{}
+
 			rf.peers[i].Call("Raft.AppendEntries", &args, &reply)
 		}(index)
 	}

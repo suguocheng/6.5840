@@ -41,37 +41,27 @@ type AppendEntriesReply struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	// Your code here (3A, 3B).
+
 	if args.Term > rf.currentTerm {
-		if rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
-			rf.currentTerm = args.Term
-			rf.voteFor = -1
-			rf.state = "Follower"
-			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+		rf.currentTerm = args.Term
+		rf.voteFor = -1
+		rf.state = "Follower"
+	}
 
-			reply.Term = rf.currentTerm
-			reply.VoteGranted = true
-		} else {
-			reply.Term = rf.currentTerm
-			reply.VoteGranted = false
-		}
-
-	} else if args.Term == rf.currentTerm && rf.voteFor == -1 {
-		if rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
+	if args.Term == rf.currentTerm {
+		if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) && rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
 			rf.voteFor = args.CandidateId
-			rf.state = "Follower"
-			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
-
-			reply.Term = rf.currentTerm
 			reply.VoteGranted = true
+			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+			DPrintf("Follower %d vote for Candidate %d", rf.me, args.CandidateId)
 		} else {
-			reply.Term = rf.currentTerm
 			reply.VoteGranted = false
 		}
 	} else {
-		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 	}
+
+	reply.Term = rf.currentTerm
 }
 
 // example code to send a RequestVote RPC to a server.
