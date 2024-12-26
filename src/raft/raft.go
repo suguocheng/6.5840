@@ -206,8 +206,8 @@ func (rf *Raft) broadcastAppendEntries() {
 				args := AppendEntriesArgs{
 					Term:         term,
 					LeaderId:     rf.me,
-					PrevLogIndex: rf.nextIndex[i] - 1,
-					PrevLogTerm:  rf.logs[rf.nextIndex[i]-1].Term,
+					PrevLogIndex: len(rf.logs) - 1,
+					PrevLogTerm:  rf.logs[len(rf.logs)-1].Term,
 					Entries:      rf.logs[rf.nextIndex[i]:],
 					LeaderCommit: commitIndex,
 				}
@@ -354,11 +354,6 @@ func (rf *Raft) ticker() {
 	for !rf.killed() {
 		// Your code here (3A)
 		// Check if a leader election should be started.
-		if rf.state != "Leader" {
-			rf.heartbeatTimer.Stop()
-		} else {
-			rf.electionTimer.Stop()
-		}
 
 		select {
 		case <-rf.electionTimer.C:
@@ -373,9 +368,9 @@ func (rf *Raft) ticker() {
 			if rf.state == "Leader" {
 				rf.broadcastHeartbeat()
 				resetTimer(rf.heartbeatTimer, time.Duration(200)*time.Millisecond)
+				// DPrintf("reset heartbeatTimer successfully 1")
 			}
 			rf.mu.Unlock()
-
 		}
 
 		// pause for a random amount of time between 50 and 350
@@ -418,6 +413,7 @@ func (rf *Raft) startElection() {
 						rf.broadcastHeartbeat()
 						rf.electionTimer.Stop()
 						resetTimer(rf.heartbeatTimer, time.Duration(200)*time.Millisecond)
+						// DPrintf("Reset heartbeatTimer successfully 2")
 
 						// 初始化nextIndex和matchIndex
 						for index := range rf.nextIndex {
@@ -451,17 +447,19 @@ func (rf *Raft) startElection() {
 
 func (rf *Raft) broadcastHeartbeat() {
 	DPrintf("Leader %d broadcasting Heartbeat, Term %d", rf.me, rf.currentTerm)
+	term := rf.currentTerm
+	commitIndex := rf.commitIndex
 	for index := range rf.peers {
 		if index == rf.me {
 			continue
 		}
 		go func(i int) {
 			args := AppendEntriesArgs{
-				Term:         rf.currentTerm,
+				Term:         term,
 				LeaderId:     rf.me,
-				PrevLogIndex: rf.nextIndex[i] - 1,
-				PrevLogTerm:  rf.logs[rf.nextIndex[i]-1].Term,
-				LeaderCommit: rf.commitIndex,
+				PrevLogIndex: len(rf.logs) - 1,
+				PrevLogTerm:  rf.logs[len(rf.logs)-1].Term,
+				LeaderCommit: commitIndex,
 			}
 			reply := AppendEntriesReply{}
 
@@ -497,6 +495,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.state = "Follower"
 	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(500, 1000)) * time.Millisecond)
 	rf.heartbeatTimer = time.NewTimer(time.Duration(200) * time.Millisecond)
+	rf.heartbeatTimer.Stop()
 	rf.applyCh = applyCh
 
 	// initialize from state persisted before a crash

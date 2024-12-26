@@ -40,6 +40,12 @@ func resetTimer(t *time.Timer, d time.Duration) {
 		}
 	}
 	t.Reset(d)
+	if d == time.Duration(randomInRange(500, 1000))*time.Millisecond {
+		DPrintf("Reset electionTimer successfully")
+	} else {
+		DPrintf("Reset heartbeatTimer successfully")
+	}
+
 }
 
 func (rf *Raft) isLogUpToDate(candidateLastIndex int, candidateLastTerm int) bool {
