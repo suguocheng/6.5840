@@ -197,7 +197,7 @@ func (rf *Raft) broadcastAppendEntries() {
 			continue
 		}
 		go func(i int) {
-			for retry := 0; retry < 3; retry++ {
+			for {
 				if rf.state != "Leader" {
 					return
 				}
@@ -206,8 +206,8 @@ func (rf *Raft) broadcastAppendEntries() {
 				args := AppendEntriesArgs{
 					Term:         term,
 					LeaderId:     rf.me,
-					PrevLogIndex: len(rf.logs) - 1,
-					PrevLogTerm:  rf.logs[len(rf.logs)-1].Term,
+					PrevLogIndex: rf.nextIndex[i] - 1,
+					PrevLogTerm:  rf.logs[rf.nextIndex[i]-1].Term,
 					Entries:      rf.logs[rf.nextIndex[i]:],
 					LeaderCommit: commitIndex,
 				}
@@ -241,11 +241,13 @@ func (rf *Raft) broadcastAppendEntries() {
 						DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", i, rf.nextIndex[i]-1)
 						if rf.nextIndex[i] > 1 {
 							rf.nextIndex[i]--
+						} else {
+							return
 						}
 					}
 					rf.mu.Unlock()
 				}
-				time.Sleep(10 * time.Millisecond)
+				time.Sleep(50 * time.Millisecond)
 			}
 		}(index)
 	}
@@ -359,16 +361,15 @@ func (rf *Raft) ticker() {
 		case <-rf.electionTimer.C:
 			rf.mu.Lock()
 			rf.startElection()
-			// if rf.state != "Leader" {
-			// 	resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
-			// }
+			if rf.state != "Leader" {
+				resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+			}
 			rf.mu.Unlock()
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
 			if rf.state == "Leader" {
 				rf.broadcastHeartbeat()
 				resetTimer(rf.heartbeatTimer, time.Duration(200)*time.Millisecond)
-				// DPrintf("reset heartbeatTimer successfully 1")
 			}
 			rf.mu.Unlock()
 		}
@@ -413,7 +414,6 @@ func (rf *Raft) startElection() {
 						rf.broadcastHeartbeat()
 						rf.electionTimer.Stop()
 						resetTimer(rf.heartbeatTimer, time.Duration(200)*time.Millisecond)
-						// DPrintf("Reset heartbeatTimer successfully 2")
 
 						// 初始化nextIndex和matchIndex
 						for index := range rf.nextIndex {

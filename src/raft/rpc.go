@@ -56,9 +56,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			DPrintf("Follower %d vote for Candidate %d", rf.me, args.CandidateId)
 		} else {
 			reply.VoteGranted = false
+			DPrintf("Follower %d don't vote for Candidate %d", rf.me, args.CandidateId)
 		}
 	} else {
 		reply.VoteGranted = false
+		DPrintf("Follower %d don't vote for Candidate %d", rf.me, args.CandidateId)
 	}
 
 	reply.Term = rf.currentTerm
@@ -126,6 +128,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.Term >= rf.currentTerm {
 		DPrintf("Follower %d term %d is outdated, switching to follower", rf.me, args.Term)
+
+		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+
 		rf.currentTerm = args.Term
 		rf.voteFor = -1
 		rf.state = "Follower"
@@ -152,8 +157,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.commitIndex = Min(args.LeaderCommit, len(rf.logs)-1)
 			DPrintf("Follower %d successfully update commitIndex. New commitIndex=%d", rf.me, rf.commitIndex)
 		}
-
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 
 		reply.Term = rf.currentTerm
 		reply.Success = true
