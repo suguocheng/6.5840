@@ -18,12 +18,12 @@ package raft
 //
 
 import (
-	//	"bytes"
+	"bytes"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	//	"6.5840/labgob"
+	"6.5840/labgob"
 	"6.5840/labrpc"
 )
 
@@ -100,12 +100,13 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) persist() {
 	// Your code here (3C).
 	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// raftstate := w.Bytes()
-	// rf.persister.Save(raftstate, nil)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.voteFor)
+	e.Encode(rf.logs)
+	raftstate := w.Bytes()
+	rf.persister.Save(raftstate, nil)
 }
 
 // restore previously persisted state.
@@ -115,17 +116,18 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	// Your code here (3C).
 	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var currentTerm int
+	var voteFor int
+	var logs []LogEntry
+	if d.Decode(&currentTerm) != nil || d.Decode(&voteFor) != nil || d.Decode(&logs) != nil {
+		DPrintf("error")
+	} else {
+		rf.currentTerm = currentTerm
+		rf.voteFor = voteFor
+		rf.logs = logs
+	}
 }
 
 // the service says it has created a snapshot that has
@@ -223,9 +225,12 @@ func (rf *Raft) broadcastAppendEntries() {
 
 					if reply.Term > rf.currentTerm {
 						DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, i, reply.Term)
+
 						rf.currentTerm = reply.Term
 						rf.state = "Follower"
 						rf.voteFor = -1
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+
 						rf.mu.Unlock()
 						return
 					}
@@ -361,9 +366,9 @@ func (rf *Raft) ticker() {
 		case <-rf.electionTimer.C:
 			rf.mu.Lock()
 			rf.startElection()
-			if rf.state != "Leader" {
-				resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
-			}
+			// if rf.state != "Leader" {
+			// 	resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+			// }
 			rf.mu.Unlock()
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
@@ -386,6 +391,8 @@ func (rf *Raft) startElection() {
 	rf.currentTerm++
 	rf.state = "Candidate"
 	rf.voteFor = rf.me
+	resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+
 	voteCount := 1
 	args := RequestVoteArgs{
 		Term:         rf.currentTerm,
@@ -449,6 +456,7 @@ func (rf *Raft) broadcastHeartbeat() {
 	DPrintf("Leader %d broadcasting Heartbeat, Term %d", rf.me, rf.currentTerm)
 	term := rf.currentTerm
 	commitIndex := rf.commitIndex
+
 	for index := range rf.peers {
 		if index == rf.me {
 			continue

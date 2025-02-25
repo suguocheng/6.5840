@@ -46,13 +46,18 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.currentTerm = args.Term
 		rf.voteFor = -1
 		rf.state = "Follower"
+		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 	}
 
 	if args.Term == rf.currentTerm {
 		if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) && rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
 			rf.voteFor = args.CandidateId
 			reply.VoteGranted = true
+
+			rf.voteFor = -1
+			rf.state = "Follower"
 			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+
 			DPrintf("Follower %d vote for Candidate %d", rf.me, args.CandidateId)
 		} else {
 			reply.VoteGranted = false
@@ -129,11 +134,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.Term >= rf.currentTerm {
 		DPrintf("Follower %d term %d is outdated, switching to follower", rf.me, args.Term)
 
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
-
 		rf.currentTerm = args.Term
 		rf.voteFor = -1
 		rf.state = "Follower"
+		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 
 		// 比较日志
 		if args.PrevLogIndex >= len(rf.logs) || rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
