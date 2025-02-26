@@ -175,6 +175,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Term:    term,
 			Index:   index,
 		})
+		rf.persist()
 		rf.nextIndex[rf.me] = index + 1
 		rf.matchIndex[rf.me] = index
 		DPrintf("Leader %d, Term %d, Appended log: Index=%d, Command=%v", rf.me, term, index, command)
@@ -229,7 +230,9 @@ func (rf *Raft) broadcastAppendEntries() {
 						rf.currentTerm = reply.Term
 						rf.state = "Follower"
 						rf.voteFor = -1
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+						rf.persist()
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(200, 400))*time.Millisecond)
+						rf.heartbeatTimer.Stop()
 
 						rf.mu.Unlock()
 						return
@@ -250,7 +253,7 @@ func (rf *Raft) broadcastAppendEntries() {
 					}
 					rf.mu.Unlock()
 				}
-				time.Sleep(50 * time.Millisecond)
+				time.Sleep(10 * time.Millisecond)
 			}
 		}(index)
 	}
@@ -293,6 +296,7 @@ func (rf *Raft) updateCommitIndex() {
 		}
 		if count > len(rf.peers)/2 && rf.logs[i].Term == rf.currentTerm {
 			rf.commitIndex = i
+			rf.applyCond.Signal()
 			DPrintf("Leader %d successfully update commitIndex. New commitIndex=%d", rf.me, rf.commitIndex)
 			break
 		}
@@ -301,11 +305,11 @@ func (rf *Raft) updateCommitIndex() {
 
 func (rf *Raft) applier() {
 	for !rf.killed() {
-		if rf.lastApplied >= rf.commitIndex {
-			continue
+		rf.mu.Lock()
+		for rf.lastApplied >= rf.commitIndex {
+			rf.applyCond.Wait()
 		}
 
-		rf.mu.Lock()
 		commitIndex, lastApplied := rf.commitIndex, rf.lastApplied
 		startIndex := lastApplied + 1
 		endIndex := commitIndex + 1
@@ -332,7 +336,6 @@ func (rf *Raft) applier() {
 		rf.mu.Unlock()
 
 		DPrintf("server %d applier: Finished applying logs up to commitIndex=%d", rf.me, rf.commitIndex)
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -372,7 +375,7 @@ func (rf *Raft) ticker() {
 			rf.mu.Lock()
 			if rf.state == "Leader" {
 				rf.broadcastHeartbeat()
-				resetTimer(rf.heartbeatTimer, time.Duration(200)*time.Millisecond)
+				resetTimer(rf.heartbeatTimer, time.Duration(100)*time.Millisecond)
 			}
 			rf.mu.Unlock()
 		}
@@ -389,7 +392,8 @@ func (rf *Raft) startElection() {
 	rf.currentTerm++
 	rf.state = "Candidate"
 	rf.voteFor = rf.me
-	resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+	rf.persist()
+	resetTimer(rf.electionTimer, time.Duration(randomInRange(200, 400))*time.Millisecond)
 
 	voteCount := 1
 	args := RequestVoteArgs{
@@ -418,7 +422,7 @@ func (rf *Raft) startElection() {
 						DPrintf("server %d become Leader", rf.me)
 						rf.broadcastHeartbeat()
 						rf.electionTimer.Stop()
-						resetTimer(rf.heartbeatTimer, time.Duration(200)*time.Millisecond)
+						resetTimer(rf.heartbeatTimer, time.Duration(100)*time.Millisecond)
 
 						// 初始化nextIndex和matchIndex
 						for index := range rf.nextIndex {
@@ -433,11 +437,13 @@ func (rf *Raft) startElection() {
 						rf.currentTerm = reply.Term
 						rf.state = "Follower"
 						rf.voteFor = -1
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+						rf.persist()
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(200, 400))*time.Millisecond)
 					} else {
 						rf.state = "Follower"
 						rf.voteFor = -1
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+						rf.persist()
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(200, 400))*time.Millisecond)
 					}
 				}
 			}
@@ -499,10 +505,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	rf.state = "Follower"
-	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(500, 1000)) * time.Millisecond)
-	rf.heartbeatTimer = time.NewTimer(time.Duration(200) * time.Millisecond)
+	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(200, 400)) * time.Millisecond)
+	rf.heartbeatTimer = time.NewTimer(time.Duration(100) * time.Millisecond)
 	rf.heartbeatTimer.Stop()
 	rf.applyCh = applyCh
+	rf.applyCond = sync.NewCond(&rf.mu)
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

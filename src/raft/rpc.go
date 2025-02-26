@@ -46,16 +46,17 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.currentTerm = args.Term
 		rf.voteFor = -1
 		rf.state = "Follower"
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+		rf.persist()
+		resetTimer(rf.electionTimer, time.Duration(randomInRange(200, 400))*time.Millisecond)
 	}
 
 	if args.Term == rf.currentTerm {
 		if rf.voteFor == -1 && rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
 			rf.voteFor = args.CandidateId
 			reply.VoteGranted = true
-
 			rf.state = "Follower"
-			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+			rf.persist()
+			resetTimer(rf.electionTimer, time.Duration(randomInRange(200, 400))*time.Millisecond)
 
 			DPrintf("Follower %d vote for Candidate %d", rf.me, args.CandidateId)
 		} else {
@@ -136,7 +137,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.currentTerm = args.Term
 		rf.voteFor = -1
 		rf.state = "Follower"
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+		rf.persist()
+		resetTimer(rf.electionTimer, time.Duration(randomInRange(200, 400))*time.Millisecond)
 
 		// 比较日志
 		if args.PrevLogIndex >= len(rf.logs) || rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
@@ -150,6 +152,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if args.Entries != nil {
 			rf.logs = rf.logs[:args.PrevLogIndex+1]
 			rf.logs = append(rf.logs, args.Entries...)
+			rf.persist()
 
 			DPrintf("Follower %d copy successed: Entries=%v",
 				rf.me, rf.logs)
@@ -158,6 +161,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// 更新commitIndex
 		if args.LeaderCommit > rf.commitIndex {
 			rf.commitIndex = Min(args.LeaderCommit, len(rf.logs)-1)
+			rf.applyCond.Signal()
 			DPrintf("Follower %d successfully update commitIndex. New commitIndex=%d", rf.me, rf.commitIndex)
 		}
 
