@@ -50,11 +50,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	if args.Term == rf.currentTerm {
-		if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) && rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
+		if rf.voteFor == -1 && rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
 			rf.voteFor = args.CandidateId
 			reply.VoteGranted = true
 
-			rf.voteFor = -1
 			rf.state = "Follower"
 			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 

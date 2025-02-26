@@ -246,8 +246,6 @@ func (rf *Raft) broadcastAppendEntries() {
 						DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", i, rf.nextIndex[i]-1)
 						if rf.nextIndex[i] > 1 {
 							rf.nextIndex[i]--
-						} else {
-							return
 						}
 					}
 					rf.mu.Unlock()
