@@ -18,13 +18,13 @@ package raft
 //
 
 import (
+	"6.5840/labgob"
+	"6.5840/labrpc"
 	"bytes"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"6.5840/labgob"
-	"6.5840/labrpc"
 )
 
 // as each Raft peer becomes aware that successive log entries are
@@ -122,7 +122,7 @@ func (rf *Raft) readPersist(data []byte) {
 	var voteFor int
 	var logs []LogEntry
 	if d.Decode(&currentTerm) != nil || d.Decode(&voteFor) != nil || d.Decode(&logs) != nil {
-		DPrintf("error")
+		fmt.Printf("error")
 	} else {
 		rf.currentTerm = currentTerm
 		rf.voteFor = voteFor
@@ -231,7 +231,7 @@ func (rf *Raft) broadcastAppendEntries() {
 						rf.state = "Follower"
 						rf.voteFor = -1
 						rf.persist()
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(200, 400))*time.Millisecond)
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 						rf.heartbeatTimer.Stop()
 
 						rf.mu.Unlock()
@@ -368,7 +368,7 @@ func (rf *Raft) ticker() {
 			rf.mu.Lock()
 			rf.startElection()
 			// if rf.state != "Leader" {
-			// 	resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+			// 	resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 			// }
 			rf.mu.Unlock()
 		case <-rf.heartbeatTimer.C:
@@ -382,7 +382,7 @@ func (rf *Raft) ticker() {
 
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
-		// ms := 50 + (rand.Int63() % 300)
+		// ms := 50 + (rand.Int63() % 1000)
 		// time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
 }
@@ -393,7 +393,7 @@ func (rf *Raft) startElection() {
 	rf.state = "Candidate"
 	rf.voteFor = rf.me
 	rf.persist()
-	resetTimer(rf.electionTimer, time.Duration(randomInRange(200, 400))*time.Millisecond)
+	resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 
 	voteCount := 1
 	args := RequestVoteArgs{
@@ -417,7 +417,7 @@ func (rf *Raft) startElection() {
 
 				if reply.VoteGranted {
 					voteCount++
-					if voteCount > len(rf.peers)/2 {
+					if voteCount > len(rf.peers)/2 && rf.state != "Leader" {
 						rf.state = "Leader"
 						DPrintf("server %d become Leader", rf.me)
 						rf.broadcastHeartbeat()
@@ -438,12 +438,12 @@ func (rf *Raft) startElection() {
 						rf.state = "Follower"
 						rf.voteFor = -1
 						rf.persist()
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(200, 400))*time.Millisecond)
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 					} else {
 						rf.state = "Follower"
 						rf.voteFor = -1
 						rf.persist()
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(200, 400))*time.Millisecond)
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 					}
 				}
 			}
@@ -466,6 +466,7 @@ func (rf *Raft) broadcastHeartbeat() {
 			continue
 		}
 		go func(i int) {
+			// for {
 			args := AppendEntriesArgs{
 				Term:         term,
 				LeaderId:     rf.me,
@@ -475,7 +476,31 @@ func (rf *Raft) broadcastHeartbeat() {
 			}
 			reply := AppendEntriesReply{}
 
-			rf.peers[i].Call("Raft.AppendEntries", &args, &reply)
+			if rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
+				rf.mu.Lock()
+
+				if reply.Term > rf.currentTerm {
+					DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, i, reply.Term)
+
+					rf.currentTerm = reply.Term
+					rf.state = "Follower"
+					rf.voteFor = -1
+					rf.persist()
+					resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
+					rf.heartbeatTimer.Stop()
+
+					rf.mu.Unlock()
+					return
+				} else {
+					DPrintf("Follower %d successfully receive heartbeat", i)
+					rf.mu.Unlock()
+					return
+				}
+			} else {
+				DPrintf("Follower %d failed to receive heartbeat, retry", i)
+			}
+			time.Sleep(10 * time.Millisecond)
+			// }
 		}(index)
 	}
 }
@@ -505,7 +530,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	rf.state = "Follower"
-	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(200, 400)) * time.Millisecond)
+	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(1000, 2000)) * time.Millisecond)
 	rf.heartbeatTimer = time.NewTimer(time.Duration(100) * time.Millisecond)
 	rf.heartbeatTimer.Stop()
 	rf.applyCh = applyCh
