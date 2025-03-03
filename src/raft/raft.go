@@ -18,13 +18,14 @@ package raft
 //
 
 import (
-	"6.5840/labgob"
-	"6.5840/labrpc"
 	"bytes"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"6.5840/labgob"
+	"6.5840/labrpc"
 )
 
 // as each Raft peer becomes aware that successive log entries are
@@ -188,9 +189,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 }
 
 func (rf *Raft) broadcastAppendEntries() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
 	term := rf.currentTerm
 	commitIndex := rf.commitIndex
 	DPrintf("Leader %d broadcasting AppendEntries, Term %d", rf.me, rf.currentTerm)
@@ -252,6 +250,8 @@ func (rf *Raft) broadcastAppendEntries() {
 						}
 					}
 					rf.mu.Unlock()
+				} else {
+					DPrintf("Follower %d failed to receive AppendEntries, retry", i)
 				}
 				time.Sleep(10 * time.Millisecond)
 			}
@@ -311,16 +311,16 @@ func (rf *Raft) applier() {
 		}
 
 		commitIndex, lastApplied := rf.commitIndex, rf.lastApplied
-		startIndex := lastApplied + 1
-		endIndex := commitIndex + 1
-		if endIndex > len(rf.logs) {
-			endIndex = len(rf.logs)
-		}
-		entries := make([]LogEntry, endIndex-startIndex)
-		copy(entries, rf.logs[startIndex:endIndex])
+		// startIndex := lastApplied + 1
+		// endIndex := commitIndex + 1
+		// if endIndex > len(rf.logs) {
+		// 	endIndex = len(rf.logs)
+		// }
+		entries := make([]LogEntry, commitIndex-lastApplied)
+		copy(entries, rf.logs[lastApplied+1:commitIndex+1])
 		rf.mu.Unlock()
 
-		DPrintf("server %d applier: Applying logs from index %d to %d", rf.me, startIndex, endIndex-1)
+		DPrintf("server %d applier: Applying logs from index %d to %d", rf.me, lastApplied+1, commitIndex+1)
 
 		for _, entry := range entries {
 			DPrintf("server %d applier: Applying log: Index=%d, Command=%v", rf.me, entry.Index, entry.Command)
@@ -426,9 +426,10 @@ func (rf *Raft) startElection() {
 
 						// 初始化nextIndex和matchIndex
 						for index := range rf.nextIndex {
-							rf.nextIndex[index] = rf.commitIndex + 1
-						}
-						for index := range rf.matchIndex {
+							if index == rf.me {
+								continue
+							}
+							rf.nextIndex[index] = len(rf.logs)
 							rf.matchIndex[index] = 0
 						}
 					}
@@ -466,41 +467,44 @@ func (rf *Raft) broadcastHeartbeat() {
 			continue
 		}
 		go func(i int) {
-			// for {
-			args := AppendEntriesArgs{
-				Term:         term,
-				LeaderId:     rf.me,
-				PrevLogIndex: len(rf.logs) - 1,
-				PrevLogTerm:  rf.logs[len(rf.logs)-1].Term,
-				LeaderCommit: commitIndex,
-			}
-			reply := AppendEntriesReply{}
-
-			if rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
+			for {
 				rf.mu.Lock()
-
-				if reply.Term > rf.currentTerm {
-					DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, i, reply.Term)
-
-					rf.currentTerm = reply.Term
-					rf.state = "Follower"
-					rf.voteFor = -1
-					rf.persist()
-					resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
-					rf.heartbeatTimer.Stop()
-
-					rf.mu.Unlock()
-					return
-				} else {
-					DPrintf("Follower %d successfully receive heartbeat", i)
-					rf.mu.Unlock()
-					return
+				args := AppendEntriesArgs{
+					Term:         term,
+					LeaderId:     rf.me,
+					PrevLogIndex: len(rf.logs) - 1,
+					PrevLogTerm:  rf.logs[len(rf.logs)-1].Term,
+					LeaderCommit: commitIndex,
 				}
-			} else {
-				DPrintf("Follower %d failed to receive heartbeat, retry", i)
+				rf.mu.Unlock()
+
+				reply := AppendEntriesReply{}
+
+				if rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
+					rf.mu.Lock()
+
+					if reply.Term > rf.currentTerm {
+						DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, i, reply.Term)
+
+						rf.currentTerm = reply.Term
+						rf.state = "Follower"
+						rf.voteFor = -1
+						rf.persist()
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
+						rf.heartbeatTimer.Stop()
+
+						rf.mu.Unlock()
+						return
+					} else {
+						DPrintf("Follower %d successfully receive heartbeat", i)
+						rf.mu.Unlock()
+						return
+					}
+				} else {
+					DPrintf("Follower %d failed to receive heartbeat, retry", i)
+				}
+				time.Sleep(10 * time.Millisecond)
 			}
-			time.Sleep(10 * time.Millisecond)
-			// }
 		}(index)
 	}
 }
