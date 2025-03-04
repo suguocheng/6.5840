@@ -229,7 +229,7 @@ func (rf *Raft) broadcastAppendEntries() {
 						rf.state = "Follower"
 						rf.voteFor = -1
 						rf.persist()
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 						rf.heartbeatTimer.Stop()
 
 						rf.mu.Unlock()
@@ -367,9 +367,7 @@ func (rf *Raft) ticker() {
 		case <-rf.electionTimer.C:
 			rf.mu.Lock()
 			rf.startElection()
-			// if rf.state != "Leader" {
-			// 	resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
-			// }
+			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 			rf.mu.Unlock()
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
@@ -382,7 +380,7 @@ func (rf *Raft) ticker() {
 
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
-		// ms := 50 + (rand.Int63() % 1000)
+		// ms := 50 + (rand.Int63() % 500)
 		// time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
 }
@@ -393,7 +391,6 @@ func (rf *Raft) startElection() {
 	rf.state = "Candidate"
 	rf.voteFor = rf.me
 	rf.persist()
-	resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 
 	voteCount := 1
 	args := RequestVoteArgs{
@@ -413,7 +410,6 @@ func (rf *Raft) startElection() {
 			reply := RequestVoteReply{}
 			if rf.sendRequestVote(i, &args, &reply) {
 				rf.mu.Lock()
-				defer rf.mu.Unlock()
 
 				if reply.VoteGranted {
 					voteCount++
@@ -439,14 +435,15 @@ func (rf *Raft) startElection() {
 						rf.state = "Follower"
 						rf.voteFor = -1
 						rf.persist()
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 					} else {
 						rf.state = "Follower"
 						rf.voteFor = -1
 						rf.persist()
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 					}
 				}
+				rf.mu.Unlock()
 			}
 		}(index)
 	}
@@ -467,44 +464,44 @@ func (rf *Raft) broadcastHeartbeat() {
 			continue
 		}
 		go func(i int) {
-			for {
-				rf.mu.Lock()
-				args := AppendEntriesArgs{
-					Term:         term,
-					LeaderId:     rf.me,
-					PrevLogIndex: len(rf.logs) - 1,
-					PrevLogTerm:  rf.logs[len(rf.logs)-1].Term,
-					LeaderCommit: commitIndex,
-				}
-				rf.mu.Unlock()
-
-				reply := AppendEntriesReply{}
-
-				if rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
-					rf.mu.Lock()
-
-					if reply.Term > rf.currentTerm {
-						DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, i, reply.Term)
-
-						rf.currentTerm = reply.Term
-						rf.state = "Follower"
-						rf.voteFor = -1
-						rf.persist()
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
-						rf.heartbeatTimer.Stop()
-
-						rf.mu.Unlock()
-						return
-					} else {
-						DPrintf("Follower %d successfully receive heartbeat", i)
-						rf.mu.Unlock()
-						return
-					}
-				} else {
-					DPrintf("Follower %d failed to receive heartbeat, retry", i)
-				}
-				time.Sleep(10 * time.Millisecond)
+			// for {
+			rf.mu.Lock()
+			args := AppendEntriesArgs{
+				Term:         term,
+				LeaderId:     rf.me,
+				PrevLogIndex: len(rf.logs) - 1,
+				PrevLogTerm:  rf.logs[len(rf.logs)-1].Term,
+				LeaderCommit: commitIndex,
 			}
+			rf.mu.Unlock()
+
+			reply := AppendEntriesReply{}
+
+			if rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
+				rf.mu.Lock()
+
+				if reply.Term > rf.currentTerm {
+					DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, i, reply.Term)
+
+					rf.currentTerm = reply.Term
+					rf.state = "Follower"
+					rf.voteFor = -1
+					rf.persist()
+					resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+					rf.heartbeatTimer.Stop()
+
+					rf.mu.Unlock()
+					return
+				} else {
+					// DPrintf("Follower %d successfully receive heartbeat", i)
+					rf.mu.Unlock()
+					return
+				}
+			} else {
+				// DPrintf("Follower %d failed to receive heartbeat, retry", i)
+			}
+			// 	time.Sleep(10 * time.Millisecond)
+			// }
 		}(index)
 	}
 }
@@ -534,7 +531,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	rf.state = "Follower"
-	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(1000, 2000)) * time.Millisecond)
+	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(500, 1000)) * time.Millisecond)
 	rf.heartbeatTimer = time.NewTimer(time.Duration(100) * time.Millisecond)
 	rf.heartbeatTimer.Stop()
 	rf.applyCh = applyCh
