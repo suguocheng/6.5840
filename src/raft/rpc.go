@@ -35,6 +35,9 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
+	XTerm   int // 冲突位置的Term
+	XIndex  int // XTerm的第一个日志索引
+	XLen    int // Follower的日志长度
 }
 
 // example RequestVote RPC handler.
@@ -53,7 +56,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	if args.Term == rf.currentTerm {
-		if rf.voteFor == -1 && rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
+		if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) && rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
 			rf.voteFor = args.CandidateId
 			reply.VoteGranted = true
 			rf.state = "Follower"
@@ -142,23 +145,49 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.persist()
 		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 
-		// 比较日志
-		if args.PrevLogIndex >= len(rf.logs) || rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
+		// // 比较日志
+		// if args.PrevLogIndex >= len(rf.logs) || rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
+		// 	DPrintf("Follower %d log mismatch: PrevLogIndex=%d, PrevLogTerm=%d", rf.me, args.PrevLogIndex, args.PrevLogTerm)
+		// 	reply.Term = rf.currentTerm
+		// 	reply.Success = false
+		// 	return
+		// }
+
+		// 2. 日志长度不足
+		if args.PrevLogIndex >= len(rf.logs) {
 			DPrintf("Follower %d log mismatch: PrevLogIndex=%d, PrevLogTerm=%d", rf.me, args.PrevLogIndex, args.PrevLogTerm)
 			reply.Term = rf.currentTerm
 			reply.Success = false
+			reply.XLen = len(rf.logs)
+			reply.XTerm = -1
+			return
+		}
+
+		// 3. Term不匹配
+		if rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
+			DPrintf("Follower %d log mismatch: PrevLogIndex=%d, PrevLogTerm=%d", rf.me, args.PrevLogIndex, args.PrevLogTerm)
+			reply.Term = rf.currentTerm
+			reply.Success = false
+			reply.XTerm = rf.logs[args.PrevLogIndex].Term
+			reply.XIndex = args.PrevLogIndex
+
+			// 回溯找到XTerm的第一个索引
+			for i := args.PrevLogIndex - 1; i >= 0; i-- {
+				if rf.logs[i].Term != reply.XTerm {
+					break
+				}
+				reply.XIndex = i
+			}
 			return
 		}
 
 		// 复制日志
-		if args.Entries != nil {
-			rf.logs = rf.logs[:args.PrevLogIndex+1]
-			rf.logs = append(rf.logs, args.Entries...)
-			rf.persist()
+		rf.logs = rf.logs[:args.PrevLogIndex+1]
+		rf.logs = append(rf.logs, args.Entries...)
+		rf.persist()
 
-			DPrintf("Follower %d copy successed: Entries=%v",
-				rf.me, rf.logs)
-		}
+		DPrintf("Follower %d copy successed: Entries=%v",
+			rf.me, rf.logs)
 
 		// 更新commitIndex
 		if args.LeaderCommit > rf.commitIndex {
