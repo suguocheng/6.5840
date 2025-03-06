@@ -35,9 +35,9 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
-	XTerm   int // 冲突位置的Term
-	XIndex  int // XTerm的第一个日志索引
-	XLen    int // Follower的日志长度
+	XTerm   int
+	XIndex  int
+	XLen    int
 }
 
 // example RequestVote RPC handler.
@@ -52,7 +52,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.voteFor = -1
 		rf.state = "Follower"
 		rf.persist()
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+		resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 	}
 
 	if args.Term == rf.currentTerm {
@@ -61,7 +61,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			reply.VoteGranted = true
 			rf.state = "Follower"
 			rf.persist()
-			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+			resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 
 			DPrintf("Follower %d vote for Candidate %d", rf.me, args.CandidateId)
 		} else {
@@ -122,7 +122,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 // 			DPrintf("Follower %d successfully appended logs. New commitIndex=%d", rf.me, rf.commitIndex)
 // 		}
 
-// 		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+// 		resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 // 		reply.Success = true
 // 	} else {
 // 		reply.Success = false
@@ -143,9 +143,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.voteFor = -1
 		rf.state = "Follower"
 		rf.persist()
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+		resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 
-		// // 比较日志
+		// 比较日志
 		// if args.PrevLogIndex >= len(rf.logs) || rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
 		// 	DPrintf("Follower %d log mismatch: PrevLogIndex=%d, PrevLogTerm=%d", rf.me, args.PrevLogIndex, args.PrevLogTerm)
 		// 	reply.Term = rf.currentTerm
@@ -153,31 +153,24 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// 	return
 		// }
 
-		// 2. 日志长度不足
+		// 检查日志是否匹配
 		if args.PrevLogIndex >= len(rf.logs) {
-			DPrintf("Follower %d log mismatch: PrevLogIndex=%d, PrevLogTerm=%d", rf.me, args.PrevLogIndex, args.PrevLogTerm)
-			reply.Term = rf.currentTerm
-			reply.Success = false
 			reply.XLen = len(rf.logs)
-			reply.XTerm = -1
+			reply.Success = false
 			return
 		}
 
-		// 3. Term不匹配
 		if rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
-			DPrintf("Follower %d log mismatch: PrevLogIndex=%d, PrevLogTerm=%d", rf.me, args.PrevLogIndex, args.PrevLogTerm)
-			reply.Term = rf.currentTerm
-			reply.Success = false
 			reply.XTerm = rf.logs[args.PrevLogIndex].Term
 			reply.XIndex = args.PrevLogIndex
-
-			// 回溯找到XTerm的第一个索引
+			// 回溯找到该 Term 的第一个索引
 			for i := args.PrevLogIndex - 1; i >= 0; i-- {
 				if rf.logs[i].Term != reply.XTerm {
 					break
 				}
 				reply.XIndex = i
 			}
+			reply.Success = false
 			return
 		}
 

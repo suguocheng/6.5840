@@ -199,6 +199,8 @@ func (rf *Raft) broadcastAppendEntries() {
 			continue
 		}
 		go func(i int) {
+			retryInterval := 10 * time.Millisecond
+			maxInterval := 1 * time.Second
 			for {
 				rf.mu.Lock()
 				if rf.state != "Leader" || rf.currentTerm != term {
@@ -226,9 +228,16 @@ func (rf *Raft) broadcastAppendEntries() {
 
 				reply := AppendEntriesReply{}
 
-				for !rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
-					DPrintf("Follower %d failed to receive AppendEntries, retry", i)
-					time.Sleep(10 * time.Millisecond)
+				ok := rf.peers[i].Call("Raft.AppendEntries", &args, &reply)
+				if !ok {
+					DPrintf("Follower %d failed to receive AppendEntries, retry after %v", i, retryInterval)
+					time.Sleep(retryInterval)
+					if 2*retryInterval > maxInterval {
+						retryInterval = maxInterval
+					} else {
+						retryInterval = 2 * retryInterval
+					}
+					continue
 				}
 
 				rf.mu.Lock()
@@ -239,49 +248,50 @@ func (rf *Raft) broadcastAppendEntries() {
 					rf.state = "Follower"
 					rf.voteFor = -1
 					rf.persist()
-					resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+					resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 					rf.heartbeatTimer.Stop()
 
 					rf.mu.Unlock()
 					return
-				}
-
-				if reply.Success {
-					DPrintf("Follower %d successfully replicated log, nextIndex=%d", i, rf.nextIndex[i])
-					rf.matchIndex[i] = args.PrevLogIndex + len(args.Entries)
-					rf.nextIndex[i] = rf.matchIndex[i] + 1
-					rf.updateCommitIndex()
-					rf.mu.Unlock()
-					return
 				} else {
-					DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", i, rf.nextIndex[i]-1)
-					// Case 1: Follower日志过短
-					if reply.XTerm == -1 {
-						rf.nextIndex[i] = reply.XLen
+					if reply.Success {
+						DPrintf("Follower %d successfully replicated log, nextIndex=%d", i, rf.nextIndex[i])
+						rf.matchIndex[i] = args.PrevLogIndex + len(args.Entries)
+						rf.nextIndex[i] = rf.matchIndex[i] + 1
+						rf.updateCommitIndex()
+						rf.mu.Unlock()
+						return
 					} else {
-						// 查找Leader日志中XTerm的最后位置
-						lastLogIndexWithXTerm := -1
-						for i := len(rf.logs) - 1; i >= 0; i-- {
-							if rf.logs[i].Term == reply.XTerm {
-								lastLogIndexWithXTerm = i
-								break
+						// if rf.nextIndex[i] > 1 {
+						// 	rf.nextIndex[i]--
+						// }
+						// DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", i, rf.nextIndex[i])
+
+						if reply.XTerm == -1 {
+							// Case 3: Follower 日志过短
+							rf.nextIndex[i] = reply.XLen
+						} else {
+							// 检查 Leader 是否有 XTerm
+							lastXTermIndex := -1
+							for i := len(rf.logs) - 1; i >= 0; i-- {
+								if rf.logs[i].Term == reply.XTerm {
+									lastXTermIndex = i
+									break
+								}
+							}
+
+							if lastXTermIndex == -1 {
+								// Case 1: Leader 没有 XTerm
+								rf.nextIndex[i] = reply.XIndex
+							} else {
+								// Case 2: Leader 有 XTerm
+								rf.nextIndex[i] = lastXTermIndex + 1
 							}
 						}
-
-						// Case 2: Leader有XTerm的日志
-						if lastLogIndexWithXTerm != -1 {
-							rf.nextIndex[i] = lastLogIndexWithXTerm + 1
-						} else {
-							// Case 3: Leader没有XTerm的日志
-							rf.nextIndex[i] = reply.XIndex
-						}
+						rf.nextIndex[i] = Max(rf.nextIndex[i], 1)
 					}
-
-					// 确保nextIndex不越界
-					rf.nextIndex[i] = Max(rf.nextIndex[i], 1)
 				}
 				rf.mu.Unlock()
-
 			}
 		}(index)
 	}
@@ -312,6 +322,9 @@ func (rf *Raft) broadcastAppendEntries() {
 
 func (rf *Raft) updateCommitIndex() {
 	for i := len(rf.logs) - 1; i > rf.commitIndex; i-- {
+		if rf.logs[i].Term != rf.currentTerm {
+			continue // 提前跳过非当前 Term 的日志
+		}
 		count := 1 // 包括自己
 		for j := range rf.peers {
 			if j == rf.me {
@@ -322,7 +335,7 @@ func (rf *Raft) updateCommitIndex() {
 				count++
 			}
 		}
-		if count > len(rf.peers)/2 && rf.logs[i].Term == rf.currentTerm {
+		if count > len(rf.peers)/2 {
 			rf.commitIndex = i
 			rf.applyCond.Signal()
 			DPrintf("Leader %d successfully update commitIndex. New commitIndex=%d", rf.me, rf.commitIndex)
@@ -393,7 +406,7 @@ func (rf *Raft) ticker() {
 		select {
 		case <-rf.electionTimer.C:
 			rf.startElection()
-			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+			resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
 			if rf.state == "Leader" {
@@ -405,7 +418,7 @@ func (rf *Raft) ticker() {
 
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
-		// ms := 50 + (rand.Int63() % 500)
+		// ms := 50 + (rand.Int63() % 1000)
 		// time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
 }
@@ -468,12 +481,12 @@ func (rf *Raft) startElection() {
 						rf.state = "Follower"
 						rf.voteFor = -1
 						rf.persist()
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 					} else {
 						rf.state = "Follower"
 						rf.voteFor = -1
 						rf.persist()
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 					}
 				}
 				rf.mu.Unlock()
@@ -525,7 +538,7 @@ func (rf *Raft) broadcastHeartbeat() {
 					rf.state = "Follower"
 					rf.voteFor = -1
 					rf.persist()
-					resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+					resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 					rf.heartbeatTimer.Stop()
 
 					rf.mu.Unlock()
@@ -569,7 +582,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	rf.state = "Follower"
-	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(500, 1000)) * time.Millisecond)
+	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(1000, 2000)) * time.Millisecond)
 	rf.heartbeatTimer = time.NewTimer(time.Duration(100) * time.Millisecond)
 	rf.heartbeatTimer.Stop()
 	rf.applyCh = applyCh
