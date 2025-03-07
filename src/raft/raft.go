@@ -248,7 +248,7 @@ func (rf *Raft) broadcastAppendEntries() {
 					rf.state = "Follower"
 					rf.voteFor = -1
 					rf.persist()
-					resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
+					resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 					rf.heartbeatTimer.Stop()
 
 					rf.mu.Unlock()
@@ -406,7 +406,7 @@ func (rf *Raft) ticker() {
 		select {
 		case <-rf.electionTimer.C:
 			rf.startElection()
-			resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
+			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
 			if rf.state == "Leader" {
@@ -418,7 +418,7 @@ func (rf *Raft) ticker() {
 
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
-		// ms := 50 + (rand.Int63() % 1000)
+		// ms := 50 + (rand.Int63() % 500)
 		// time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
 }
@@ -481,12 +481,12 @@ func (rf *Raft) startElection() {
 						rf.state = "Follower"
 						rf.voteFor = -1
 						rf.persist()
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 					} else {
 						rf.state = "Follower"
 						rf.voteFor = -1
 						rf.persist()
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 					}
 				}
 				rf.mu.Unlock()
@@ -538,7 +538,7 @@ func (rf *Raft) broadcastHeartbeat() {
 					rf.state = "Follower"
 					rf.voteFor = -1
 					rf.persist()
-					resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
+					resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 					rf.heartbeatTimer.Stop()
 
 					rf.mu.Unlock()
@@ -582,7 +582,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 	rf.state = "Follower"
-	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(1000, 2000)) * time.Millisecond)
+	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(500, 1000)) * time.Millisecond)
 	rf.heartbeatTimer = time.NewTimer(time.Duration(100) * time.Millisecond)
 	rf.heartbeatTimer.Stop()
 	rf.applyCh = applyCh

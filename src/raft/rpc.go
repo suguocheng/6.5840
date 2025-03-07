@@ -52,7 +52,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.voteFor = -1
 		rf.state = "Follower"
 		rf.persist()
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
+		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 	}
 
 	if args.Term == rf.currentTerm {
@@ -61,7 +61,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			reply.VoteGranted = true
 			rf.state = "Follower"
 			rf.persist()
-			resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
+			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 
 			DPrintf("Follower %d vote for Candidate %d", rf.me, args.CandidateId)
 		} else {
@@ -122,7 +122,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 // 			DPrintf("Follower %d successfully appended logs. New commitIndex=%d", rf.me, rf.commitIndex)
 // 		}
 
-// 		resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
+// 		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 // 		reply.Success = true
 // 	} else {
 // 		reply.Success = false
@@ -143,7 +143,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.voteFor = -1
 		rf.state = "Follower"
 		rf.persist()
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
+		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 
 		// 比较日志
 		// if args.PrevLogIndex >= len(rf.logs) || rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
