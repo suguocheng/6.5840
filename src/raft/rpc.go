@@ -153,6 +153,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// 	return
 		// }
 
+		if args.PrevLogIndex < rf.logs[0].Index {
+			reply.Term, reply.Success = rf.currentTerm, false
+			return
+		}
+
 		// 检查日志是否匹配
 		if args.PrevLogIndex >= len(rf.logs) {
 			reply.XLen = len(rf.logs)
@@ -163,8 +168,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
 			reply.XTerm = rf.logs[args.PrevLogIndex].Term
 			reply.XIndex = args.PrevLogIndex
+			firstLogIndex := rf.logs[0].Index
 			// 回溯找到该 Term 的第一个索引
-			for i := args.PrevLogIndex - 1; i >= 0; i-- {
+			for i := args.PrevLogIndex - 1; i >= firstLogIndex; i-- {
 				if rf.logs[i].Term != reply.XTerm {
 					break
 				}

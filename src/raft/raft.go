@@ -127,6 +127,7 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.currentTerm = currentTerm
 		rf.voteFor = voteFor
 		rf.logs = logs
+		rf.lastApplied, rf.commitIndex = rf.logs[0].Index, rf.logs[0].Index
 	}
 }
 
@@ -162,23 +163,27 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	index := len(rf.logs)
-	term := rf.currentTerm
+	var index int
+	if len(rf.logs) > 0 {
+		index = rf.logs[len(rf.logs)-1].Index + 1
+	} else {
+		index = 0
+	}
 	isLeader := rf.state == "Leader"
-	DPrintf("server %d, Term %d, Starting command: %v", rf.me, term, command)
+	DPrintf("server %d, Term %d, Starting command: %v", rf.me, rf.currentTerm, command)
 
 	// Your code here (3B).
 
 	if isLeader {
 		rf.logs = append(rf.logs, LogEntry{
 			Command: command,
-			Term:    term,
+			Term:    rf.currentTerm,
 			Index:   index,
 		})
 		rf.persist()
 		rf.nextIndex[rf.me] = index + 1
 		rf.matchIndex[rf.me] = index
-		DPrintf("Leader %d, Term %d, Appended log: Index=%d, Command=%v", rf.me, term, index, command)
+		DPrintf("Leader %d, Term %d, Appended log: Index=%d, Command=%v", rf.me, rf.currentTerm, index, command)
 
 		go rf.broadcastAppendEntries()
 	} else {
@@ -208,10 +213,11 @@ func (rf *Raft) broadcastAppendEntries() {
 					return
 				}
 
+				firstLogIndex := rf.logs[0].Index
 				prevLogIndex := rf.nextIndex[i] - 1
 				prevLogTerm := rf.logs[prevLogIndex].Term
-				entries := make([]LogEntry, len(rf.logs[rf.nextIndex[i]:]))
-				copy(entries, rf.logs[rf.nextIndex[i]:])
+				entries := make([]LogEntry, len(rf.logs[prevLogIndex-firstLogIndex+1:]))
+				copy(entries, rf.logs[prevLogIndex-firstLogIndex+1:])
 
 				args := AppendEntriesArgs{
 					Term:         term,
@@ -351,14 +357,14 @@ func (rf *Raft) applier() {
 			rf.applyCond.Wait()
 		}
 
-		commitIndex, lastApplied := rf.commitIndex, rf.lastApplied
+		firstLogIndex, commitIndex, lastApplied := rf.logs[0].Index, rf.commitIndex, rf.lastApplied
 		// startIndex := lastApplied + 1
 		// endIndex := commitIndex + 1
 		// if endIndex > len(rf.logs) {
 		// 	endIndex = len(rf.logs)
 		// }
 		entries := make([]LogEntry, commitIndex-lastApplied)
-		copy(entries, rf.logs[lastApplied+1:commitIndex+1])
+		copy(entries, rf.logs[lastApplied-firstLogIndex+1:commitIndex-firstLogIndex+1])
 		rf.mu.Unlock()
 
 		DPrintf("server %d applier: Applying logs from index %d to %d", rf.me, lastApplied+1, commitIndex+1)
