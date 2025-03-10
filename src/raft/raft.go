@@ -127,7 +127,6 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.currentTerm = currentTerm
 		rf.voteFor = voteFor
 		rf.logs = logs
-		rf.lastApplied, rf.commitIndex = rf.logs[0].Index, rf.logs[0].Index
 	}
 }
 
@@ -208,11 +207,10 @@ func (rf *Raft) broadcastAppendEntries() {
 					return
 				}
 
-				firstLogIndex := rf.logs[0].Index
 				prevLogIndex := rf.nextIndex[i] - 1
 				prevLogTerm := rf.logs[prevLogIndex].Term
-				entries := make([]LogEntry, len(rf.logs[prevLogIndex-firstLogIndex+1:]))
-				copy(entries, rf.logs[prevLogIndex-firstLogIndex+1:])
+				entries := make([]LogEntry, len(rf.logs[prevLogIndex:]))
+				copy(entries, rf.logs[prevLogIndex:])
 
 				args := AppendEntriesArgs{
 					Term:         term,
@@ -245,7 +243,7 @@ func (rf *Raft) broadcastAppendEntries() {
 						return
 					} else {
 						if reply.Success {
-							rf.matchIndex[i] = args.PrevLogIndex + len(args.Entries)
+							rf.matchIndex[i] = args.PrevLogIndex + len(args.Entries) - 1
 							rf.nextIndex[i] = rf.matchIndex[i] + 1
 							DPrintf("Follower %d successfully replicated log, nextIndex=%d", i, rf.nextIndex[i])
 							rf.updateCommitIndex()
@@ -258,32 +256,17 @@ func (rf *Raft) broadcastAppendEntries() {
 							// DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", i, rf.nextIndex[i])
 
 							if reply.XTerm == -1 {
-								// Case 3: Follower 日志过短
+								// Follower 日志过短
 								rf.nextIndex[i] = reply.XLen
 							} else {
-								// 检查 Leader 是否有 XTerm
-								lastXTermIndex := -1
-								for i := len(rf.logs) - 1; i >= 0; i-- {
-									if rf.logs[i].Term == reply.XTerm {
-										lastXTermIndex = i
-										break
-									}
-								}
-
-								if lastXTermIndex == -1 {
-									// Case 1: Leader 没有 XTerm
-									rf.nextIndex[i] = reply.XIndex
-								} else {
-									// Case 2: Leader 有 XTerm
-									rf.nextIndex[i] = lastXTermIndex + 1
-								}
+								rf.nextIndex[i] = reply.XIndex
 							}
 							rf.nextIndex[i] = Max(rf.nextIndex[i], 1)
 						}
 					}
 					rf.mu.Unlock()
 				} else {
-					DPrintf("Follower %d failed to receive AppendEntries, retry after %v", i, retryInterval)
+					DPrintf("Follower %d failed to receive Leader %d AppendEntries, retry after %v", i, rf.me, retryInterval)
 					time.Sleep(retryInterval)
 					if 2*retryInterval > maxInterval {
 						retryInterval = maxInterval
@@ -350,17 +333,12 @@ func (rf *Raft) applier() {
 			rf.applyCond.Wait()
 		}
 
-		firstLogIndex, commitIndex, lastApplied := rf.logs[0].Index, rf.commitIndex, rf.lastApplied
-		// startIndex := lastApplied + 1
-		// endIndex := commitIndex + 1
-		// if endIndex > len(rf.logs) {
-		// 	endIndex = len(rf.logs)
-		// }
+		commitIndex, lastApplied := rf.commitIndex, rf.lastApplied
 		entries := make([]LogEntry, commitIndex-lastApplied)
-		copy(entries, rf.logs[lastApplied-firstLogIndex+1:commitIndex-firstLogIndex+1])
+		copy(entries, rf.logs[lastApplied+1:commitIndex+1])
 		rf.mu.Unlock()
 
-		DPrintf("server %d applier: Applying logs from index %d to %d", rf.me, lastApplied+1, commitIndex+1)
+		DPrintf("server %d applier: Applying logs from index %d to %d", rf.me, lastApplied+1, commitIndex)
 
 		for _, entry := range entries {
 			DPrintf("server %d applier: Applying log: Index=%d, Command=%v", rf.me, entry.Index, entry.Command)
@@ -527,7 +505,7 @@ func (rf *Raft) broadcastHeartbeat() {
 				LeaderCommit: rf.commitIndex,
 			}
 
-			DPrintf("Leader %d sending Heartbeat to Follower %d: PrevLogIndex=%d, Entries=%v LeaderCommit=%d",
+			DPrintf("Leader %d sending Heartbeat to Follower %d: PrevLogIndex=%d, Entries=%v, LeaderCommit=%d",
 				rf.me, i, args.PrevLogIndex, args.Entries, args.LeaderCommit)
 
 			rf.mu.Unlock()

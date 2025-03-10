@@ -153,24 +153,21 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// 	return
 		// }
 
-		if args.PrevLogIndex < rf.logs[0].Index {
-			reply.Term, reply.Success = rf.currentTerm, false
-			return
-		}
-
 		// 检查日志是否匹配
 		if args.PrevLogIndex >= len(rf.logs) {
+			DPrintf("Follower %d log mismatch: PrevLogIndex=%d, PrevLogTerm=%d", rf.me, args.PrevLogIndex, args.PrevLogTerm)
 			reply.XLen = len(rf.logs)
+			reply.Term = -1
 			reply.Success = false
 			return
 		}
 
 		if rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
+			DPrintf("Follower %d log mismatch: PrevLogIndex=%d, PrevLogTerm=%d", rf.me, args.PrevLogIndex, args.PrevLogTerm)
 			reply.XTerm = rf.logs[args.PrevLogIndex].Term
 			reply.XIndex = args.PrevLogIndex
-			firstLogIndex := rf.logs[0].Index
 			// 回溯找到该 Term 的第一个索引
-			for i := args.PrevLogIndex - 1; i >= firstLogIndex; i-- {
+			for i := args.PrevLogIndex - 1; i >= 1; i-- {
 				if rf.logs[i].Term != reply.XTerm {
 					break
 				}
@@ -180,13 +177,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			return
 		}
 
-		// 复制日志
-		rf.logs = rf.logs[:args.PrevLogIndex+1]
-		rf.logs = append(rf.logs, args.Entries...)
-		rf.persist()
+		// if rf.logs[len(rf.logs)-1].Index > rf.logs[args.PrevLogIndex].Index {
+		// 	rf.logs = rf.logs[:args.PrevLogIndex+1]
+		// }
 
-		DPrintf("Follower %d copy successed: Entries=%v",
-			rf.me, rf.logs)
+		// 复制日志
+		if args.Entries != nil {
+			rf.logs = rf.logs[:args.PrevLogIndex+1]
+			rf.logs = append(rf.logs, args.Entries[1:]...)
+			rf.persist()
+
+			DPrintf("Follower %d copy successed: Entries=%v",
+				rf.me, rf.logs)
+		}
 
 		// 更新commitIndex
 		if args.LeaderCommit > rf.commitIndex {
