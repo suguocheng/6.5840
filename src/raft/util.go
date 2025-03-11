@@ -16,7 +16,7 @@ func init() {
 }
 
 // Debugging
-const Debug = false
+const Debug = true
 
 func DPrintf(format string, a ...interface{}) {
 	if Debug {
@@ -49,8 +49,8 @@ func resetTimer(t *time.Timer, d time.Duration) {
 }
 
 func (rf *Raft) isLogUpToDate(candidateLastIndex int, candidateLastTerm int) bool {
-	lastIndex := rf.logs[len(rf.logs)-1].Index // 当前节点的最后一个日志索引
-	lastTerm := rf.logs[len(rf.logs)-1].Term   // 当前节点的最后一个日志任期
+	lastIndex := len(rf.logs) - 1            // 当前节点的最后一个日志索引
+	lastTerm := rf.logs[len(rf.logs)-1].Term // 当前节点的最后一个日志任期
 
 	// 比较日志条目任期
 	if candidateLastTerm > lastTerm {

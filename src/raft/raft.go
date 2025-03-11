@@ -209,8 +209,8 @@ func (rf *Raft) broadcastAppendEntries() {
 
 				prevLogIndex := rf.nextIndex[i] - 1
 				prevLogTerm := rf.logs[prevLogIndex].Term
-				entries := make([]LogEntry, len(rf.logs[prevLogIndex:]))
-				copy(entries, rf.logs[prevLogIndex:])
+				entries := make([]LogEntry, len(rf.logs[prevLogIndex+1:]))
+				copy(entries, rf.logs[prevLogIndex+1:])
 
 				args := AppendEntriesArgs{
 					Term:         term,
@@ -232,6 +232,7 @@ func (rf *Raft) broadcastAppendEntries() {
 					if reply.Term > rf.currentTerm {
 						DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, i, reply.Term)
 
+						rf.logs = rf.logs[:len(rf.logs)-1]
 						rf.currentTerm = reply.Term
 						rf.state = "Follower"
 						rf.voteFor = -1
@@ -243,7 +244,7 @@ func (rf *Raft) broadcastAppendEntries() {
 						return
 					} else {
 						if reply.Success {
-							rf.matchIndex[i] = args.PrevLogIndex + len(args.Entries) - 1
+							rf.matchIndex[i] = args.PrevLogIndex + len(args.Entries)
 							rf.nextIndex[i] = rf.matchIndex[i] + 1
 							DPrintf("Follower %d successfully replicated log, nextIndex=%d", i, rf.nextIndex[i])
 							rf.updateCommitIndex()
@@ -531,6 +532,7 @@ func (rf *Raft) broadcastHeartbeat() {
 					if reply.Success {
 						// DPrintf("Follower %d successfully receive heartbeat", i)
 						rf.matchIndex[i] = args.PrevLogIndex
+						rf.nextIndex[i] = rf.matchIndex[i] + 1
 						rf.updateCommitIndex()
 						rf.mu.Unlock()
 						return

@@ -157,7 +157,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if args.PrevLogIndex >= len(rf.logs) {
 			DPrintf("Follower %d log mismatch: PrevLogIndex=%d, PrevLogTerm=%d", rf.me, args.PrevLogIndex, args.PrevLogTerm)
 			reply.XLen = len(rf.logs)
-			reply.Term = -1
+			reply.XTerm = -1
 			reply.Success = false
 			return
 		}
@@ -177,15 +177,20 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			return
 		}
 
-		// if rf.logs[len(rf.logs)-1].Index > rf.logs[args.PrevLogIndex].Index {
-		// 	rf.logs = rf.logs[:args.PrevLogIndex+1]
-		// }
-
 		// 复制日志
 		if args.Entries != nil {
 			rf.logs = rf.logs[:args.PrevLogIndex+1]
-			rf.logs = append(rf.logs, args.Entries[1:]...)
+			rf.logs = append(rf.logs, args.Entries...)
 			rf.persist()
+
+			// for index, entry := range args.Entries {
+			// 	// find the junction of the existing log and the appended log.
+			// 	if entry.Index >= len(rf.logs) || rf.logs[entry.Index].Term != entry.Term {
+			// 		rf.logs = append(rf.logs[:entry.Index], args.Entries[index:]...)
+			// 		rf.persist()
+			// 		break
+			// 	}
+			// }
 
 			DPrintf("Follower %d copy successed: Entries=%v",
 				rf.me, rf.logs)
