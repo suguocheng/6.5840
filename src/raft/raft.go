@@ -67,19 +67,18 @@ type Raft struct {
 	// Your data here (3A, 3B, 3C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-	currentTerm         int
-	voteFor             int
-	logs                []LogEntry
-	commitIndex         int
-	lastApplied         int
-	lastReplicatedIndex int
-	state               string
-	nextIndex           []int
-	matchIndex          []int
-	electionTimer       *time.Timer
-	heartbeatTimer      *time.Timer
-	applyCh             chan ApplyMsg
-	applyCond           *sync.Cond
+	currentTerm    int
+	voteFor        int
+	logs           []LogEntry
+	commitIndex    int
+	lastApplied    int
+	state          string
+	nextIndex      []int
+	matchIndex     []int
+	electionTimer  *time.Timer
+	heartbeatTimer *time.Timer
+	applyCh        chan ApplyMsg
+	applyCond      *sync.Cond
 }
 
 // return currentTerm and whether this server
@@ -163,7 +162,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	index := rf.logs[len(rf.logs)-1].Index + 1
+	index := rf.getLastLog().Index + 1
 	isLeader := rf.state == "Leader"
 	DPrintf("server %d, Term %d, Starting command: %v", rf.me, rf.currentTerm, command)
 
@@ -256,8 +255,7 @@ func (rf *Raft) broadcastAppendEntries() {
 							// 	rf.nextIndex[i]--
 							// }
 							// DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", i, rf.nextIndex[i])
-
-							if reply.XLen == -1 {
+							if reply.XLen == 0 && reply.XTerm == 0 {
 								rf.mu.Unlock()
 								return
 							}
@@ -420,8 +418,8 @@ func (rf *Raft) startElection() {
 	args := RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateId:  rf.me,
-		LastLogIndex: rf.logs[len(rf.logs)-1].Index,
-		LastLogTerm:  rf.logs[len(rf.logs)-1].Term,
+		LastLogIndex: rf.getLastLog().Index,
+		LastLogTerm:  rf.getLastLog().Term,
 	}
 	rf.mu.Unlock()
 	for index := range rf.peers {
@@ -458,7 +456,6 @@ func (rf *Raft) startElection() {
 							rf.nextIndex[index] = len(rf.logs)
 							rf.matchIndex[index] = 0
 						}
-						rf.lastReplicatedIndex = 0
 					}
 				} else {
 					if reply.Term > rf.currentTerm {
@@ -584,7 +581,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.lastApplied = 0
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
-	rf.lastReplicatedIndex = 0
 	rf.state = "Follower"
 	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(500, 1000)) * time.Millisecond)
 	rf.heartbeatTimer = time.NewTimer(time.Duration(100) * time.Millisecond)
