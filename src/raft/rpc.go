@@ -190,7 +190,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		}
 
 		newEntriesIndex := args.PrevLogIndex + len(args.Entries)
-		lastLogIndex := rf.getLastLog().Index
+		lastLogIndex := rf.logs[len(rf.logs)-1].Index
 
 		// 如果 follower 日志更长，但新日志的 term 旧，允许覆盖
 		if newEntriesIndex < lastLogIndex {

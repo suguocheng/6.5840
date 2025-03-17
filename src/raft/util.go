@@ -49,8 +49,8 @@ func resetTimer(t *time.Timer, d time.Duration) {
 }
 
 func (rf *Raft) isLogUpToDate(candidateLastIndex int, candidateLastTerm int) bool {
-	lastIndex := len(rf.logs) - 1    // 当前节点的最后一个日志索引
-	lastTerm := rf.getLastLog().Term // 当前节点的最后一个日志任期
+	lastIndex := rf.getLastLog().Index // 当前节点的最后一个日志索引
+	lastTerm := rf.getLastLog().Term   // 当前节点的最后一个日志任期
 
 	// 比较日志条目任期
 	if candidateLastTerm > lastTerm {
@@ -85,14 +85,4 @@ func (rf *Raft) getLastLog() LogEntry {
 
 func (rf *Raft) getFirstLog() LogEntry {
 	return rf.logs[0]
-}
-
-func shrinkEntries(entries []LogEntry) []LogEntry {
-	const lenMultiple = 2
-	if cap(entries) > len(entries)*lenMultiple {
-		newEntries := make([]LogEntry, len(entries))
-		copy(newEntries, entries)
-		return newEntries
-	}
-	return entries
 }
