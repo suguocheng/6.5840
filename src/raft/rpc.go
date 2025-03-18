@@ -174,13 +174,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			return
 		}
 
-		if rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
+		firstLogIndex := rf.getFirstLog().Index
+		if rf.logs[args.PrevLogIndex-firstLogIndex].Term != args.PrevLogTerm {
 			DPrintf("Follower %d log mismatch: PrevLogIndex=%d, PrevLogTerm=%d", rf.me, args.PrevLogIndex, args.PrevLogTerm)
-			reply.XTerm = rf.logs[args.PrevLogIndex].Term
+			reply.XTerm = rf.logs[args.PrevLogIndex-firstLogIndex].Term
 			reply.XIndex = args.PrevLogIndex
 			// 回溯找到该 Term 的第一个索引
-			for i := args.PrevLogIndex - 1; i >= 1; i-- {
-				if rf.logs[i].Term != reply.XTerm {
+			for i := args.PrevLogIndex - 1; i >= firstLogIndex; i-- {
+				if rf.logs[i-firstLogIndex].Term != reply.XTerm {
 					break
 				}
 				reply.XIndex = i
@@ -202,7 +203,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 					break // 超出 follower 日志范围，说明这些新日志是有用的
 				}
 
-				if rf.logs[logIndex].Term != entry.Term {
+				if rf.logs[logIndex-firstLogIndex].Term != entry.Term {
 					// **日志 term 不匹配，说明 Leader 需要覆盖 follower 的日志**
 					isDuplicate = false
 					break
@@ -219,7 +220,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 		// 复制日志
 		// if args.Entries != nil {
-		rf.logs = rf.logs[:args.PrevLogIndex+1]
+		rf.logs = rf.logs[:args.PrevLogIndex-firstLogIndex+1]
 		rf.logs = append(rf.logs, args.Entries...)
 		rf.persist()
 

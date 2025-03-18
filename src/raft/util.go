@@ -86,3 +86,13 @@ func (rf *Raft) getLastLog() LogEntry {
 func (rf *Raft) getFirstLog() LogEntry {
 	return rf.logs[0]
 }
+
+func shrinkEntries(entries []LogEntry) []LogEntry {
+	const lenMultiple = 2
+	if cap(entries) > len(entries)*lenMultiple {
+		newEntries := make([]LogEntry, len(entries))
+		copy(newEntries, entries)
+		return newEntries
+	}
+	return entries
+}
