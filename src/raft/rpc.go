@@ -40,18 +40,6 @@ type AppendEntriesReply struct {
 	XLen    int
 }
 
-type InstallSnapshotArgs struct {
-	Term              int
-	LeaderId          int
-	LastIncludedIndex int
-	LastIncludedTerm  int
-	Data              []byte
-}
-
-type InstallSnapshotReply struct {
-	Term int
-}
-
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
@@ -174,14 +162,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			return
 		}
 
-		firstLogIndex := rf.getFirstLog().Index
-		if rf.logs[args.PrevLogIndex-firstLogIndex].Term != args.PrevLogTerm {
+		if rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
 			DPrintf("Follower %d log mismatch: PrevLogIndex=%d, PrevLogTerm=%d", rf.me, args.PrevLogIndex, args.PrevLogTerm)
-			reply.XTerm = rf.logs[args.PrevLogIndex-firstLogIndex].Term
+			reply.XTerm = rf.logs[args.PrevLogIndex].Term
 			reply.XIndex = args.PrevLogIndex
 			// 回溯找到该 Term 的第一个索引
-			for i := args.PrevLogIndex - 1; i >= firstLogIndex; i-- {
-				if rf.logs[i-firstLogIndex].Term != reply.XTerm {
+			for i := args.PrevLogIndex - 1; i >= 1; i-- {
+				if rf.logs[i].Term != reply.XTerm {
 					break
 				}
 				reply.XIndex = i
@@ -203,7 +190,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 					break // 超出 follower 日志范围，说明这些新日志是有用的
 				}
 
-				if rf.logs[logIndex-firstLogIndex].Term != entry.Term {
+				if rf.logs[logIndex].Term != entry.Term {
 					// **日志 term 不匹配，说明 Leader 需要覆盖 follower 的日志**
 					isDuplicate = false
 					break
@@ -220,7 +207,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 		// 复制日志
 		// if args.Entries != nil {
-		rf.logs = rf.logs[:args.PrevLogIndex-firstLogIndex+1]
+		rf.logs = rf.logs[:args.PrevLogIndex+1]
 		rf.logs = append(rf.logs, args.Entries...)
 		rf.persist()
 
@@ -249,36 +236,5 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	} else {
 		reply.Term = rf.currentTerm
 		reply.Success = false
-	}
-}
-
-func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	defer DPrintf("{Node %v}'s state is {state %v, term %v}} after processing InstallSnapshot,  InstallSnapshotArgs %v and InstallSnapshotReply %v ", rf.me, rf.state, rf.currentTerm, args, reply)
-
-	if args.Term >= rf.currentTerm {
-		rf.currentTerm = args.Term
-		rf.voteFor = -1
-		rf.state = "Follower"
-		rf.persist()
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
-
-		// check the snapshot is more up-to-date than the current log
-		if args.LastIncludedIndex <= rf.commitIndex {
-			return
-		}
-
-		go func() {
-			rf.applyCh <- ApplyMsg{
-				SnapshotValid: true,
-				Snapshot:      args.Data,
-				SnapshotTerm:  args.LastIncludedTerm,
-				SnapshotIndex: args.LastIncludedIndex,
-			}
-		}()
-
-	} else {
-		reply.Term = rf.currentTerm
 	}
 }
