@@ -16,7 +16,7 @@ func init() {
 }
 
 // Debugging
-const Debug = false
+const Debug = true
 
 func DPrintf(format string, a ...interface{}) {
 	if Debug {
@@ -42,7 +42,7 @@ func resetTimer(t *time.Timer, d time.Duration) {
 	t.Reset(d)
 	// if d == time.Duration(200)*time.Millisecond {
 	// 	DPrintf("Reset heartbeatTimer successfully")
-	// } else {
+	// } else {y
 	// 	DPrintf("Reset electionTimer successfully")
 	// }
 

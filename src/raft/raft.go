@@ -136,7 +136,27 @@ func (rf *Raft) readPersist(data []byte) {
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (3D).
+	// Your code here (3D).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
+	snapshotIndex := rf.getFirstLog().Index
+	if index <= snapshotIndex || index > rf.getLastLog().Index {
+		return
+	}
+
+	// remove log entries up to index
+	rf.logs = rf.logs[index-snapshotIndex:]
+
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.voteFor)
+	e.Encode(rf.logs)
+	raftstate := w.Bytes()
+	rf.persister.Save(raftstate, snapshot)
+
+	DPrintf("Server %d Generate snapshot before index %d", rf.me, index)
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -388,7 +408,9 @@ func (rf *Raft) ticker() {
 		select {
 		case <-rf.electionTimer.C:
 			rf.startElection()
-			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+			if rf.state != "Leader" {
+				resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+			}
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
 			if rf.state == "Leader" {
@@ -460,11 +482,6 @@ func (rf *Raft) startElection() {
 				} else {
 					if reply.Term > rf.currentTerm {
 						rf.currentTerm = reply.Term
-						rf.state = "Follower"
-						rf.voteFor = -1
-						rf.persist()
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
-					} else {
 						rf.state = "Follower"
 						rf.voteFor = -1
 						rf.persist()

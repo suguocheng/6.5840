@@ -174,12 +174,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			return
 		}
 
-		if rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
+		if rf.logs[args.PrevLogIndex-rf.getFirstLog().Index].Term != args.PrevLogTerm {
 			DPrintf("Follower %d log mismatch: PrevLogIndex=%d, PrevLogTerm=%d", rf.me, args.PrevLogIndex, args.PrevLogTerm)
-			reply.XTerm = rf.logs[args.PrevLogIndex].Term
+			reply.XTerm = rf.logs[args.PrevLogIndex-rf.getFirstLog().Index].Term
 			reply.XIndex = args.PrevLogIndex
 			// 回溯找到该 Term 的第一个索引
-			for i := args.PrevLogIndex - 1; i >= 1; i-- {
+			for i := args.PrevLogIndex - rf.getFirstLog().Index - 1; i >= rf.getFirstLog().Index; i-- {
 				if rf.logs[i].Term != reply.XTerm {
 					break
 				}
@@ -192,18 +192,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		newEntriesIndex := args.PrevLogIndex + len(args.Entries)
 		lastLogIndex := rf.getLastLog().Index
 
-		// 如果 follower 日志更长，但新日志的 term 旧，允许覆盖
 		if newEntriesIndex < lastLogIndex {
-			// **检查新日志是否和 follower 当前日志冲突**
+			// 检查新日志是否和 follower 当前日志冲突
 			isDuplicate := true
 			for i, entry := range args.Entries {
 				logIndex := args.PrevLogIndex + 1 + i
-				if logIndex > lastLogIndex {
-					break // 超出 follower 日志范围，说明这些新日志是有用的
-				}
-
-				if rf.logs[logIndex].Term != entry.Term {
-					// **日志 term 不匹配，说明 Leader 需要覆盖 follower 的日志**
+				if rf.logs[logIndex-rf.getFirstLog().Index].Term != entry.Term {
+					// 日志 term 不匹配，说明 Leader 需要覆盖 follower 的日志
 					isDuplicate = false
 					break
 				}
@@ -219,7 +214,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 		// 复制日志
 		// if args.Entries != nil {
-		rf.logs = rf.logs[:args.PrevLogIndex+1]
+		rf.logs = rf.logs[:args.PrevLogIndex-rf.getFirstLog().Index+1]
 		rf.logs = append(rf.logs, args.Entries...)
 		rf.persist()
 
