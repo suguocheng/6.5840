@@ -286,6 +286,7 @@ func (rf *Raft) broadcastAppendEntries() {
 							} else {
 								rf.nextIndex[i] = reply.XIndex
 							}
+
 							rf.nextIndex[i] = Max(rf.nextIndex[i], 1)
 						}
 					}

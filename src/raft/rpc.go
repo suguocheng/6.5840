@@ -206,7 +206,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 			// 如果没有 break，说明日志匹配，无需覆盖，拒绝重复 RPC
 			if isDuplicate {
-				reply.Term, reply.Success = rf.currentTerm, false
+				reply.Term = rf.currentTerm
+				reply.Success = false
+				reply.XIndex = len(rf.logs)
+
 				DPrintf("follower %d received duplicate logs, rejecting", rf.me)
 				return
 			}
