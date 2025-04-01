@@ -230,8 +230,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// 	}
 		// }
 
-		DPrintf("Follower %d copy successed: Entries=%v",
-			rf.me, rf.logs)
+		DPrintf("Follower %d copy successed: Entries=%v", rf.me, rf.logs)
 		// }
 
 		// 更新commitIndex

@@ -464,7 +464,7 @@ func (rf *Raft) startElection() {
 
 				if reply.VoteGranted {
 					voteCount++
-					if voteCount > len(rf.peers)/2 && rf.state != "Leader" {
+					if voteCount > len(rf.peers)/2 && rf.state == "Candidate" {
 						rf.state = "Leader"
 						DPrintf("server %d become Leader", rf.me)
 						rf.broadcastHeartbeat()
