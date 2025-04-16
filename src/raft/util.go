@@ -96,3 +96,7 @@ func shrinkEntries(entries []LogEntry) []LogEntry {
 	}
 	return entries
 }
+
+func (rf *Raft) isLogMatched(index, term int) bool {
+	return index <= rf.getLastLog().Index && term == rf.logs[index-rf.getFirstLog().Index].Term
+}

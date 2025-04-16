@@ -189,46 +189,46 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			return
 		}
 
-		newEntriesIndex := args.PrevLogIndex + len(args.Entries)
-		lastLogIndex := rf.getLastLog().Index
+		// newEntriesIndex := args.PrevLogIndex + len(args.Entries)
+		// lastLogIndex := rf.getLastLog().Index
 
-		if newEntriesIndex < lastLogIndex {
-			// 检查新日志是否和 follower 当前日志冲突
-			isDuplicate := true
-			for i, entry := range args.Entries {
-				logIndex := args.PrevLogIndex + 1 + i
-				if rf.logs[logIndex-rf.getFirstLog().Index].Term != entry.Term {
-					// 日志 term 不匹配，说明 Leader 需要覆盖 follower 的日志
-					isDuplicate = false
-					break
-				}
-			}
+		// if newEntriesIndex < lastLogIndex {
+		// 	// 检查新日志是否和 follower 当前日志冲突
+		// 	isDuplicate := true
+		// 	for i, entry := range args.Entries {
+		// 		logIndex := args.PrevLogIndex + 1 + i
+		// 		if rf.logs[logIndex-rf.getFirstLog().Index].Term != entry.Term {
+		// 			// 日志 term 不匹配，说明 Leader 需要覆盖 follower 的日志
+		// 			isDuplicate = false
+		// 			break
+		// 		}
+		// 	}
 
-			// 如果没有 break，说明日志匹配，无需覆盖，拒绝重复 RPC
-			if isDuplicate {
-				reply.Term = rf.currentTerm
-				reply.Success = false
-				reply.XIndex = len(rf.logs)
+		// 	// 如果没有 break，说明日志匹配，无需覆盖，拒绝重复 RPC
+		// 	if isDuplicate {
+		// 		reply.Term = rf.currentTerm
+		// 		reply.Success = false
+		// 		reply.XIndex = len(rf.logs)
 
-				DPrintf("follower %d received duplicate logs, rejecting", rf.me)
-				return
-			}
-		}
-
-		// 复制日志
-		// if args.Entries != nil {
-		rf.logs = rf.logs[:args.PrevLogIndex-rf.getFirstLog().Index+1]
-		rf.logs = append(rf.logs, args.Entries...)
-		rf.persist()
-
-		// for index, entry := range args.Entries {
-		// 	// find the junction of the existing log and the appended log.
-		// 	if entry.Index >= len(rf.logs) || rf.logs[entry.Index].Term != entry.Term {
-		// 		rf.logs = append(rf.logs[:entry.Index], args.Entries[index:]...)
-		// 		rf.persist()
-		// 		break
+		// 		DPrintf("follower %d received duplicate logs, rejecting", rf.me)
+		// 		return
 		// 	}
 		// }
+
+		// 复制日志
+		if args.Entries != nil {
+			rf.logs = rf.logs[:args.PrevLogIndex-rf.getFirstLog().Index+1]
+			rf.logs = append(rf.logs, args.Entries...)
+			rf.persist()
+
+			// for index, entry := range args.Entries {
+			// 	// find the junction of the existing log and the appended log.
+			// 	if entry.Index >= len(rf.logs) || rf.logs[entry.Index].Term != entry.Term {
+			// 		rf.logs = append(rf.logs[:entry.Index], args.Entries[index:]...)
+			// 		rf.persist()
+			// 		break
+			// 	}
+		}
 
 		DPrintf("Follower %d copy successed: Entries=%v", rf.me, rf.logs)
 		// }

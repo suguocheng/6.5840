@@ -199,7 +199,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.matchIndex[rf.me] = index
 		DPrintf("Leader %d, Term %d, Appended log: Index=%d, Command=%v", rf.me, rf.currentTerm, index, command)
 
-		go rf.broadcastAppendEntries()
+		go rf.broadcastAppendEntries(false)
 	} else {
 		DPrintf("Not a leader, returning")
 	}
@@ -207,11 +207,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	return index, rf.currentTerm, isLeader
 }
 
-func (rf *Raft) broadcastAppendEntries() {
-	rf.mu.Lock()
-	DPrintf("Leader %d broadcasting AppendEntries, Term %d", rf.me, rf.currentTerm)
+func (rf *Raft) broadcastAppendEntries(isHeartbeat bool) {
+	DPrintf("Leader %d broadcasting AppendEntries, Term %d, isHeartbeat %v", rf.me, rf.currentTerm, isHeartbeat)
 	term := rf.currentTerm
-	rf.mu.Unlock()
 
 	for index := range rf.peers {
 		if index == rf.me {
@@ -229,8 +227,11 @@ func (rf *Raft) broadcastAppendEntries() {
 
 				prevLogIndex := rf.nextIndex[i] - 1
 				prevLogTerm := rf.logs[prevLogIndex].Term
-				entries := make([]LogEntry, len(rf.logs[prevLogIndex+1:]))
-				copy(entries, rf.logs[prevLogIndex+1:])
+				var entries []LogEntry
+				if !isHeartbeat {
+					entries = make([]LogEntry, len(rf.logs[prevLogIndex+1:]))
+					copy(entries, rf.logs[prevLogIndex+1:])
+				}
 
 				args := AppendEntriesArgs{
 					Term:         term,
@@ -264,8 +265,9 @@ func (rf *Raft) broadcastAppendEntries() {
 						return
 					} else {
 						if reply.Success {
-							rf.matchIndex[i] = args.PrevLogIndex + len(args.Entries)
-							rf.nextIndex[i] = rf.matchIndex[i] + 1
+							match := args.PrevLogIndex + len(args.Entries)
+							rf.matchIndex[i] = match
+							rf.nextIndex[i] = match + 1
 							DPrintf("Follower %d successfully replicated log, nextIndex=%d", i, rf.nextIndex[i])
 							rf.updateCommitIndex()
 							rf.mu.Unlock()
@@ -292,13 +294,17 @@ func (rf *Raft) broadcastAppendEntries() {
 					}
 					rf.mu.Unlock()
 				} else {
-					DPrintf("Follower %d failed to receive Leader %d AppendEntries, retry after %v", i, rf.me, retryInterval)
+					// DPrintf("Follower %d failed to receive Leader %d AppendEntries, retry after %v", i, rf.me, retryInterval)
 					time.Sleep(retryInterval)
 					if 2*retryInterval > maxInterval {
 						retryInterval = maxInterval
 					} else {
 						retryInterval = 2 * retryInterval
 					}
+				}
+
+				if isHeartbeat {
+					return
 				}
 			}
 		}(index)
@@ -415,7 +421,7 @@ func (rf *Raft) ticker() {
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
 			if rf.state == "Leader" {
-				rf.broadcastHeartbeat()
+				rf.broadcastAppendEntries(true)
 				resetTimer(rf.heartbeatTimer, time.Duration(100)*time.Millisecond)
 			}
 			rf.mu.Unlock()
@@ -467,7 +473,7 @@ func (rf *Raft) startElection() {
 					if voteCount > len(rf.peers)/2 && rf.state == "Candidate" {
 						rf.state = "Leader"
 						DPrintf("server %d become Leader", rf.me)
-						rf.broadcastHeartbeat()
+						rf.broadcastAppendEntries(true)
 						rf.electionTimer.Stop()
 						resetTimer(rf.heartbeatTimer, time.Duration(100)*time.Millisecond)
 
@@ -500,80 +506,80 @@ func (rf *Raft) startElection() {
 	// }
 }
 
-func (rf *Raft) broadcastHeartbeat() {
-	DPrintf("Leader %d broadcasting Heartbeat, Term %d", rf.me, rf.currentTerm)
-	term := rf.currentTerm
+// func (rf *Raft) broadcastHeartbeat() {
+// 	DPrintf("Leader %d broadcasting Heartbeat, Term %d", rf.me, rf.currentTerm)
+// 	term := rf.currentTerm
 
-	for index := range rf.peers {
-		if index == rf.me {
-			continue
-		}
-		go func(i int) {
-			// retryInterval := 10 * time.Millisecond
-			// maxInterval := 1 * time.Second
-			// for {
-			rf.mu.Lock()
-			if rf.state != "Leader" {
-				rf.mu.Unlock()
-				return
-			}
-			prevLogIndex := rf.nextIndex[i] - 1
-			prevLogTerm := rf.logs[prevLogIndex].Term
-			args := AppendEntriesArgs{
-				Term:         term,
-				LeaderId:     rf.me,
-				PrevLogIndex: prevLogIndex,
-				PrevLogTerm:  prevLogTerm,
-				Entries:      nil,
-				LeaderCommit: rf.commitIndex,
-			}
+// 	for index := range rf.peers {
+// 		if index == rf.me {
+// 			continue
+// 		}
+// 		go func(i int) {
+// 			// retryInterval := 10 * time.Millisecond
+// 			// maxInterval := 1 * time.Second
+// 			// for {
+// 			rf.mu.Lock()
+// 			if rf.state != "Leader" {
+// 				rf.mu.Unlock()
+// 				return
+// 			}
+// 			prevLogIndex := rf.nextIndex[i] - 1
+// 			prevLogTerm := rf.logs[prevLogIndex].Term
+// 			args := AppendEntriesArgs{
+// 				Term:         term,
+// 				LeaderId:     rf.me,
+// 				PrevLogIndex: prevLogIndex,
+// 				PrevLogTerm:  prevLogTerm,
+// 				Entries:      nil,
+// 				LeaderCommit: rf.commitIndex,
+// 			}
 
-			DPrintf("Leader %d sending Heartbeat to Follower %d: PrevLogIndex=%d, Entries=%v, LeaderCommit=%d",
-				rf.me, i, args.PrevLogIndex, args.Entries, args.LeaderCommit)
+// 			DPrintf("Leader %d sending Heartbeat to Follower %d: PrevLogIndex=%d, Entries=%v, LeaderCommit=%d",
+// 				rf.me, i, args.PrevLogIndex, args.Entries, args.LeaderCommit)
 
-			rf.mu.Unlock()
+// 			rf.mu.Unlock()
 
-			reply := AppendEntriesReply{}
+// 			reply := AppendEntriesReply{}
 
-			if rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
-				rf.mu.Lock()
+// 			if rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
+// 				rf.mu.Lock()
 
-				if reply.Term > rf.currentTerm {
-					DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, i, reply.Term)
+// 				if reply.Term > rf.currentTerm {
+// 					DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, i, reply.Term)
 
-					rf.currentTerm = reply.Term
-					rf.state = "Follower"
-					rf.voteFor = -1
-					rf.persist()
-					resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
-					rf.heartbeatTimer.Stop()
+// 					rf.currentTerm = reply.Term
+// 					rf.state = "Follower"
+// 					rf.voteFor = -1
+// 					rf.persist()
+// 					resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+// 					rf.heartbeatTimer.Stop()
 
-					rf.mu.Unlock()
-					return
-				} else {
-					if reply.Success {
-						// DPrintf("Follower %d successfully receive heartbeat", i)
-						rf.matchIndex[i] = args.PrevLogIndex
-						rf.nextIndex[i] = rf.matchIndex[i] + 1
-						rf.updateCommitIndex()
-						rf.mu.Unlock()
-						return
-					}
-				}
-				rf.mu.Unlock()
-			} else {
-				// DPrintf("Follower %d failed to receive heartbeat, retry", i)
-			}
-			// 	time.Sleep(retryInterval)
-			// 	if 2*retryInterval > maxInterval {
-			// 		retryInterval = maxInterval
-			// 	} else {
-			// 		retryInterval = 2 * retryInterval
-			// 	}
-			// }
-		}(index)
-	}
-}
+// 					rf.mu.Unlock()
+// 					return
+// 				} else {
+// 					if reply.Success {
+// 						// DPrintf("Follower %d successfully receive heartbeat", i)
+// 						rf.matchIndex[i] = args.PrevLogIndex
+// 						rf.nextIndex[i] = rf.matchIndex[i] + 1
+// 						rf.updateCommitIndex()
+// 						rf.mu.Unlock()
+// 						return
+// 					}
+// 				}
+// 				rf.mu.Unlock()
+// 			} else {
+// 				// DPrintf("Follower %d failed to receive heartbeat, retry", i)
+// 			}
+// 			// 	time.Sleep(retryInterval)
+// 			// 	if 2*retryInterval > maxInterval {
+// 			// 		retryInterval = maxInterval
+// 			// 	} else {
+// 			// 		retryInterval = 2 * retryInterval
+// 			// 	}
+// 			// }
+// 		}(index)
+// 	}
+// }
 
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
