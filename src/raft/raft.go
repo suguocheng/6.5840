@@ -226,70 +226,56 @@ func (rf *Raft) broadcastAppendEntries(isHeartbeat bool) {
 				}
 
 				prevLogIndex := rf.nextIndex[i] - 1
-				prevLogTerm := rf.logs[prevLogIndex].Term
-				var entries []LogEntry
-				if !isHeartbeat {
-					entries = make([]LogEntry, len(rf.logs[prevLogIndex+1:]))
-					copy(entries, rf.logs[prevLogIndex+1:])
-				}
-
-				args := AppendEntriesArgs{
-					Term:         term,
+				firstLogIndex := rf.getFirstLog().Index
+				entries := make([]LogEntry, len(rf.logs[prevLogIndex-firstLogIndex+1:]))
+				copy(entries, rf.logs[prevLogIndex-firstLogIndex+1:])
+				args := &AppendEntriesArgs{
+					Term:         rf.currentTerm,
 					LeaderId:     rf.me,
 					PrevLogIndex: prevLogIndex,
-					PrevLogTerm:  prevLogTerm,
-					Entries:      entries,
+					PrevLogTerm:  rf.logs[prevLogIndex-firstLogIndex].Term,
 					LeaderCommit: rf.commitIndex,
+					Entries:      entries,
 				}
 				rf.mu.Unlock()
-
-				DPrintf("Leader %d sending AppendEntries to Follower %d: PrevLogIndex=%d, Entries=%v LeaderCommit=%d",
-					rf.me, i, args.PrevLogIndex, args.Entries, args.LeaderCommit)
-
-				reply := AppendEntriesReply{}
-
-				if rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
+				reply := new(AppendEntriesReply)
+				if rf.peers[i].Call("Raft.AppendEntries", args, reply) {
 					rf.mu.Lock()
-					if reply.Term > rf.currentTerm {
-						DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, i, reply.Term)
+					if args.Term == rf.currentTerm && rf.state == "Leader" {
+						if !reply.Success {
+							if reply.Term > rf.currentTerm {
+								// indicate current server is not the leader
+								rf.currentTerm = reply.Term
+								rf.state = "Follower"
+								rf.voteFor = -1
+								rf.persist()
+								resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+								rf.heartbeatTimer.Stop()
 
-						// rf.logs = rf.logs[:len(rf.logs)-1]
-						rf.currentTerm = reply.Term
-						rf.state = "Follower"
-						rf.voteFor = -1
-						rf.persist()
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
-						rf.heartbeatTimer.Stop()
-
-						rf.mu.Unlock()
-						return
-					} else {
-						if reply.Success {
-							match := args.PrevLogIndex + len(args.Entries)
-							rf.matchIndex[i] = match
-							rf.nextIndex[i] = match + 1
-							DPrintf("Follower %d successfully replicated log, nextIndex=%d", i, rf.nextIndex[i])
-							rf.updateCommitIndex()
-							rf.mu.Unlock()
-							return
-						} else {
-							// if rf.nextIndex[i] > 1 {
-							// 	rf.nextIndex[i]--
-							// }
-							// DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", i, rf.nextIndex[i])
-							if reply.XLen == 0 && reply.XTerm == 0 {
 								rf.mu.Unlock()
 								return
+							} else if reply.Term == rf.currentTerm {
+								// decrease nextIndex and retry
+								rf.nextIndex[i] = reply.ConflictIndex
+								// TODO: optimize the nextIndex finding, maybe use binary search
+								if reply.ConflictTerm != -1 {
+									firstLogIndex := rf.getFirstLog().Index
+									for index := args.PrevLogIndex - 1; index >= firstLogIndex; index-- {
+										if rf.logs[index-firstLogIndex].Term == reply.ConflictTerm {
+											rf.nextIndex[i] = index
+											break
+										}
+									}
+								}
 							}
+						} else {
+							rf.matchIndex[1] = args.PrevLogIndex + len(args.Entries)
+							rf.nextIndex[1] = rf.matchIndex[1] + 1
+							// advance commitIndex if possible
+							rf.updateCommitIndex()
 
-							if reply.XTerm == -1 {
-								// Follower 日志过短
-								rf.nextIndex[i] = reply.XLen
-							} else {
-								rf.nextIndex[i] = reply.XIndex
-							}
-
-							rf.nextIndex[i] = Max(rf.nextIndex[i], 1)
+							rf.mu.Unlock()
+							return
 						}
 					}
 					rf.mu.Unlock()
@@ -310,29 +296,6 @@ func (rf *Raft) broadcastAppendEntries(isHeartbeat bool) {
 		}(index)
 	}
 }
-
-// func (rf *Raft) handleAppendEntriesReply(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) {
-// 	if reply.Term > rf.currentTerm {
-// 		DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, server, reply.Term)
-// 		rf.currentTerm = reply.Term
-// 		rf.state = "Follower"
-// 		rf.voteFor = -1
-// 		return
-// 	}
-
-// 	if reply.Success {
-// 		DPrintf("Follower %d successfully replicated log, nextIndex=%d", server, rf.nextIndex[server])
-// 		rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
-// 		rf.nextIndex[server] = rf.matchIndex[server] + 1
-// 		rf.updateCommitIndex()
-
-// 	} else {
-// 		DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", server, rf.nextIndex[server]-1)
-// 		if rf.nextIndex[server] > 1 {
-// 			rf.nextIndex[server]--
-// 		}
-// 	}
-// }
 
 func (rf *Raft) updateCommitIndex() {
 	for i := len(rf.logs) - 1; i > rf.commitIndex; i-- {
