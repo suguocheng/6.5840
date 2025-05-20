@@ -79,6 +79,7 @@ type Raft struct {
 	heartbeatTimer *time.Timer
 	applyCh        chan ApplyMsg
 	applyCond      *sync.Cond
+	replicatorCond []*sync.Cond
 }
 
 // return currentTerm and whether this server
@@ -199,7 +200,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.matchIndex[rf.me] = index
 		DPrintf("Leader %d, Term %d, Appended log: Index=%d, Command=%v", rf.me, rf.currentTerm, index, command)
 
-		go rf.broadcastAppendEntries(false)
+		go rf.BroadcastHeartbeat(false)
 	} else {
 		DPrintf("Not a leader, returning")
 	}
@@ -207,108 +208,142 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	return index, rf.currentTerm, isLeader
 }
 
-func (rf *Raft) broadcastAppendEntries(isHeartbeat bool) {
+func (rf *Raft) BroadcastHeartbeat(isHeartbeat bool) {
+	for peer := range rf.peers {
+		if peer == rf.me {
+			continue
+		}
+		if isHeartbeat {
+			// should send heartbeat to all peers immediately
+			go rf.broadcastAppendEntries(true, peer)
+		} else {
+			// just need to signal replicator to send log entries to peer
+			rf.replicatorCond[peer].Signal()
+		}
+	}
+}
+
+func (rf *Raft) needReplicating(peer int) bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	// check the logs of peer is behind the leader
+	return rf.state == "Leader" && rf.matchIndex[peer] < rf.getLastLog().Index
+}
+
+func (rf *Raft) replicator(peer int) {
+	rf.replicatorCond[peer].L.Lock()
+	defer rf.replicatorCond[peer].L.Unlock()
+	for rf.killed() == false {
+		for !rf.needReplicating(peer) {
+			rf.replicatorCond[peer].Wait()
+		}
+		// send log entries to peer
+		rf.broadcastAppendEntries(false, peer)
+	}
+}
+
+func (rf *Raft) broadcastAppendEntries(isHeartbeat bool, i int) {
 	DPrintf("Leader %d broadcasting AppendEntries, Term %d, isHeartbeat %v", rf.me, rf.currentTerm, isHeartbeat)
 	term := rf.currentTerm
 
-	for index := range rf.peers {
-		if index == rf.me {
-			continue
-		}
-		go func(i int) {
-			retryInterval := 10 * time.Millisecond
-			maxInterval := 1 * time.Second
-			for {
-				rf.mu.Lock()
-				if rf.state != "Leader" || rf.currentTerm != term {
-					rf.mu.Unlock()
-					return
-				}
-
-				prevLogIndex := rf.nextIndex[i] - 1
-				prevLogTerm := rf.logs[prevLogIndex].Term
-				var entries []LogEntry
-				if !isHeartbeat {
-					entries = make([]LogEntry, len(rf.logs[prevLogIndex+1:]))
-					copy(entries, rf.logs[prevLogIndex+1:])
-				}
-
-				args := AppendEntriesArgs{
-					Term:         term,
-					LeaderId:     rf.me,
-					PrevLogIndex: prevLogIndex,
-					PrevLogTerm:  prevLogTerm,
-					Entries:      entries,
-					LeaderCommit: rf.commitIndex,
-				}
-				rf.mu.Unlock()
-
-				DPrintf("Leader %d sending AppendEntries to Follower %d: PrevLogIndex=%d, Entries=%v LeaderCommit=%d",
-					rf.me, i, args.PrevLogIndex, args.Entries, args.LeaderCommit)
-
-				reply := AppendEntriesReply{}
-
-				if rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
-					rf.mu.Lock()
-					if reply.Term > rf.currentTerm {
-						DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, i, reply.Term)
-
-						// rf.logs = rf.logs[:len(rf.logs)-1]
-						rf.currentTerm = reply.Term
-						rf.state = "Follower"
-						rf.voteFor = -1
-						rf.persist()
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
-						rf.heartbeatTimer.Stop()
-
-						rf.mu.Unlock()
-						return
-					} else {
-						if reply.Success {
-							match := args.PrevLogIndex + len(args.Entries)
-							rf.matchIndex[i] = match
-							rf.nextIndex[i] = match + 1
-							DPrintf("Follower %d successfully replicated log, nextIndex=%d", i, rf.nextIndex[i])
-							rf.updateCommitIndex()
-							rf.mu.Unlock()
-							return
-						} else {
-							// if rf.nextIndex[i] > 1 {
-							// 	rf.nextIndex[i]--
-							// }
-							// DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", i, rf.nextIndex[i])
-							if reply.XLen == 0 && reply.XTerm == 0 {
-								rf.mu.Unlock()
-								return
-							}
-
-							if reply.XTerm == -1 {
-								// Follower 日志过短
-								rf.nextIndex[i] = reply.XLen
-							} else {
-								rf.nextIndex[i] = reply.XIndex
-							}
-
-							rf.nextIndex[i] = Max(rf.nextIndex[i], 1)
-						}
-					}
-					rf.mu.Unlock()
-				} else {
-					// DPrintf("Follower %d failed to receive Leader %d AppendEntries, retry after %v", i, rf.me, retryInterval)
-					time.Sleep(retryInterval)
-					if 2*retryInterval > maxInterval {
-						retryInterval = maxInterval
-					} else {
-						retryInterval = 2 * retryInterval
-					}
-				}
-
-				if isHeartbeat {
-					return
-				}
-			}
-		}(index)
+	// for index := range rf.peers {
+	// 	if index == rf.me {
+	// 		continue
+	// 	}
+	// 	go func(i int) {
+	// 		retryInterval := 10 * time.Millisecond
+	// 		maxInterval := 1 * time.Second
+	// 		for {
+	rf.mu.Lock()
+	if rf.state != "Leader" || rf.currentTerm != term {
+		rf.mu.Unlock()
+		return
 	}
+
+	prevLogIndex := rf.nextIndex[i] - 1
+	prevLogTerm := rf.logs[prevLogIndex].Term
+	var entries []LogEntry
+	if !isHeartbeat {
+		entries = make([]LogEntry, len(rf.logs[prevLogIndex+1:]))
+		copy(entries, rf.logs[prevLogIndex+1:])
+	}
+
+	args := AppendEntriesArgs{
+		Term:         term,
+		LeaderId:     rf.me,
+		PrevLogIndex: prevLogIndex,
+		PrevLogTerm:  prevLogTerm,
+		Entries:      entries,
+		LeaderCommit: rf.commitIndex,
+	}
+	rf.mu.Unlock()
+
+	DPrintf("Leader %d sending AppendEntries to Follower %d: PrevLogIndex=%d, Entries=%v LeaderCommit=%d",
+		rf.me, i, args.PrevLogIndex, args.Entries, args.LeaderCommit)
+
+	reply := AppendEntriesReply{}
+
+	if rf.peers[i].Call("Raft.AppendEntries", &args, &reply) {
+		rf.mu.Lock()
+		if reply.Term > rf.currentTerm {
+			DPrintf("Leader %d sees higher term from Follower %d: Term %d", rf.me, i, reply.Term)
+
+			// rf.logs = rf.logs[:len(rf.logs)-1]
+			rf.currentTerm = reply.Term
+			rf.state = "Follower"
+			rf.voteFor = -1
+			rf.persist()
+			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+			rf.heartbeatTimer.Stop()
+
+			rf.mu.Unlock()
+			return
+		} else {
+			if reply.Success {
+				match := args.PrevLogIndex + len(args.Entries)
+				rf.matchIndex[i] = match
+				rf.nextIndex[i] = match + 1
+				DPrintf("Follower %d successfully replicated log, nextIndex=%d", i, rf.nextIndex[i])
+				rf.updateCommitIndex()
+				rf.mu.Unlock()
+				return
+			} else {
+				// if rf.nextIndex[i] > 1 {
+				// 	rf.nextIndex[i]--
+				// }
+				// DPrintf("Follower %d failed to replicate log, retrying with PrevLogIndex=%d", i, rf.nextIndex[i])
+				if reply.XLen == 0 && reply.XTerm == 0 {
+					rf.mu.Unlock()
+					return
+				}
+
+				if reply.XTerm == -1 {
+					// Follower 日志过短
+					rf.nextIndex[i] = reply.XLen
+				} else {
+					rf.nextIndex[i] = reply.XIndex
+				}
+
+				rf.nextIndex[i] = Max(rf.nextIndex[i], 1)
+			}
+		}
+		rf.mu.Unlock()
+	} else {
+		// DPrintf("Follower %d failed to receive Leader %d AppendEntries, retry after %v", i, rf.me, retryInterval)
+		// time.Sleep(retryInterval)
+		// if 2*retryInterval > maxInterval {
+		// 	retryInterval = maxInterval
+		// } else {
+		// 	retryInterval = 2 * retryInterval
+		// }
+	}
+
+	if isHeartbeat {
+		return
+	}
+	//			}
+	//		}(index)
+	//	}
 }
 
 func (rf *Raft) updateCommitIndex() {
@@ -398,7 +433,7 @@ func (rf *Raft) ticker() {
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
 			if rf.state == "Leader" {
-				rf.broadcastAppendEntries(true)
+				rf.BroadcastHeartbeat(true)
 				resetTimer(rf.heartbeatTimer, time.Duration(100)*time.Millisecond)
 			}
 			rf.mu.Unlock()
@@ -450,7 +485,7 @@ func (rf *Raft) startElection() {
 					if voteCount > len(rf.peers)/2 && rf.state == "Candidate" {
 						rf.state = "Leader"
 						DPrintf("server %d become Leader", rf.me)
-						rf.broadcastAppendEntries(true)
+						rf.BroadcastHeartbeat(true)
 						rf.electionTimer.Stop()
 						resetTimer(rf.heartbeatTimer, time.Duration(100)*time.Millisecond)
 
@@ -588,13 +623,22 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.heartbeatTimer.Stop()
 	rf.applyCh = applyCh
 	rf.applyCond = sync.NewCond(&rf.mu)
+	rf.replicatorCond = make([]*sync.Cond, len(peers))
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
+	for peer := range peers {
+		rf.matchIndex[peer], rf.nextIndex[peer] = 0, rf.getLastLog().Index+1
+		if peer != rf.me {
+			rf.replicatorCond[peer] = sync.NewCond(&sync.Mutex{})
+			// start replicator goroutine to send log entries to peer
+			go rf.replicator(peer)
+		}
+	}
+
 	// start ticker goroutine to start elections
 	go rf.ticker()
-
 	go rf.applier()
 
 	return rf
