@@ -59,7 +59,7 @@ type ApplyMsg struct {
 
 // A Go object implementing a single Raft peer.
 type Raft struct {
-	mu        sync.Mutex          // Lock to protect shared access to this peer's state
+	mu        sync.RWMutex        // Lock to protect shared access to this peer's state
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
 	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
@@ -86,8 +86,8 @@ type Raft struct {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
 
 	return rf.currentTerm, rf.state == "Leader"
 }
@@ -150,6 +150,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	newLogs := make([]LogEntry, len(rf.logs[index-snapshotIndex:]))
 	copy(newLogs, rf.logs[index-snapshotIndex:])
 	rf.logs = newLogs
+	rf.logs[0].Command = nil
 
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
@@ -249,8 +250,8 @@ func (rf *Raft) BroadcastHeartbeat(isHeartbeat bool) {
 	}
 }
 func (rf *Raft) needReplicating(peer int) bool {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
 	// check the logs of peer is behind the leader
 	return rf.state == "Leader" && rf.matchIndex[peer] < rf.getLastLog().Index
 }
@@ -271,9 +272,9 @@ func (rf *Raft) broadcastAppendEntries(isHeartbeat bool, i int) {
 	DPrintf("Leader %d broadcasting AppendEntries, Term %d, isHeartbeat %v", rf.me, rf.currentTerm, isHeartbeat)
 	term := rf.currentTerm
 
-	rf.mu.Lock()
+	rf.mu.RLock()
 	if rf.state != "Leader" || rf.currentTerm != term {
-		rf.mu.Unlock()
+		rf.mu.RUnlock()
 		return
 	}
 
@@ -287,7 +288,7 @@ func (rf *Raft) broadcastAppendEntries(isHeartbeat bool, i int) {
 			LastIncludedTerm:  firstLog.Term,
 			Data:              rf.persister.ReadSnapshot(),
 		}
-		rf.mu.Unlock()
+		rf.mu.RUnlock()
 
 		reply := new(InstallSnapshotReply)
 
@@ -326,7 +327,7 @@ func (rf *Raft) broadcastAppendEntries(isHeartbeat bool, i int) {
 			Entries:      entries,
 			LeaderCommit: rf.commitIndex,
 		}
-		rf.mu.Unlock()
+		rf.mu.RUnlock()
 
 		DPrintf("Leader %d sending AppendEntries to Follower %d: PrevLogIndex=%d, Entries=%v LeaderCommit=%d",
 			rf.me, i, args.PrevLogIndex, args.Entries, args.LeaderCommit)
@@ -346,8 +347,6 @@ func (rf *Raft) broadcastAppendEntries(isHeartbeat bool, i int) {
 				resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
 				rf.heartbeatTimer.Stop()
 
-				rf.mu.Unlock()
-				return
 			} else {
 				if reply.Success {
 					match := args.PrevLogIndex + len(args.Entries)
@@ -355,8 +354,6 @@ func (rf *Raft) broadcastAppendEntries(isHeartbeat bool, i int) {
 					rf.nextIndex[i] = match + 1
 					DPrintf("Follower %d successfully replicated log, nextIndex=%d", i, rf.nextIndex[i])
 					rf.updateCommitIndex()
-					rf.mu.Unlock()
-					return
 				} else {
 					// if rf.nextIndex[i] > 1 {
 					// 	rf.nextIndex[i]--
@@ -562,6 +559,7 @@ func (rf *Raft) startElection() {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{}
+	rf.mu = sync.RWMutex{}
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
