@@ -249,6 +249,7 @@ func (rf *Raft) BroadcastHeartbeat(isHeartbeat bool) {
 		}
 	}
 }
+
 func (rf *Raft) needReplicating(peer int) bool {
 	rf.mu.RLock()
 	defer rf.mu.RUnlock()
@@ -269,7 +270,7 @@ func (rf *Raft) replicator(peer int) {
 }
 
 func (rf *Raft) broadcastAppendEntries(isHeartbeat bool, i int) {
-	DPrintf("Leader %d broadcasting AppendEntries, Term %d, isHeartbeat %v", rf.me, rf.currentTerm, isHeartbeat)
+	DPrintf("Leader %d send RPC to %d, Term %d, isHeartbeat %v", rf.me, i, rf.currentTerm, isHeartbeat)
 	term := rf.currentTerm
 
 	rf.mu.RLock()
@@ -306,6 +307,7 @@ func (rf *Raft) broadcastAppendEntries(isHeartbeat bool, i int) {
 				} else {
 					rf.nextIndex[i] = args.LastIncludedIndex + 1
 					rf.matchIndex[i] = args.LastIncludedIndex
+					rf.replicatorCond[i].Signal()
 				}
 			}
 			rf.mu.Unlock()

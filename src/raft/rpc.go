@@ -199,7 +199,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// }
 
 		// 更新commitIndex
-		if args.LeaderCommit > rf.commitIndex {
+		newCommitIndex := Min(args.LeaderCommit, rf.getLastLog().Index)
+		if newCommitIndex > rf.commitIndex {
 			rf.commitIndex = Min(args.LeaderCommit, rf.getLastLog().Index)
 			rf.applyCond.Signal()
 			DPrintf("Follower %d successfully update commitIndex. New commitIndex=%d", rf.me, rf.commitIndex)
@@ -247,12 +248,14 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 			}
 		}()
 
-		rf.logs = []LogEntry{
-			{Term: args.LastIncludedTerm, Index: args.LastIncludedIndex}, // 虚拟日志条目
-		}
-		rf.commitIndex = args.LastIncludedIndex
-		rf.lastApplied = args.LastIncludedIndex
-		rf.persist()
+		rf.applyCond.Signal()
+
+		// rf.logs = []LogEntry{
+		// 	{Term: args.LastIncludedTerm, Index: args.LastIncludedIndex}, // 虚拟日志条目
+		// }
+		// rf.commitIndex = args.LastIncludedIndex
+		// rf.lastApplied = args.LastIncludedIndex
+		// rf.persist()
 
 	} else {
 		return
