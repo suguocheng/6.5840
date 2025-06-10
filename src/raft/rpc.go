@@ -56,6 +56,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	if args.Term < rf.currentTerm {
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
+		return
+	}
+
 	if args.Term > rf.currentTerm {
 		DPrintf("Follower %d sees higher term from Candidate %d: Term %d", rf.me, args.CandidateId, args.Term)
 
@@ -64,27 +70,23 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.state = "Follower"
 		rf.persist()
 		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+		rf.heartbeatTimer.Stop()
 	}
 
-	if args.Term == rf.currentTerm {
-		if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) && rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
-			rf.voteFor = args.CandidateId
-			reply.VoteGranted = true
-			rf.state = "Follower"
-			rf.persist()
-			resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+	reply.Term = rf.currentTerm
 
-			DPrintf("Follower %d vote for Candidate %d", rf.me, args.CandidateId)
-		} else {
-			reply.VoteGranted = false
-			DPrintf("Follower %d don't vote for Candidate %d", rf.me, args.CandidateId)
-		}
+	if (rf.voteFor == -1 || rf.voteFor == args.CandidateId) && rf.isLogUpToDate(args.LastLogIndex, args.LastLogTerm) {
+		rf.voteFor = args.CandidateId
+		reply.VoteGranted = true
+		rf.persist()
+		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+
+		DPrintf("Follower %d vote for Candidate %d", rf.me, args.CandidateId)
 	} else {
 		reply.VoteGranted = false
 		DPrintf("Follower %d don't vote for Candidate %d", rf.me, args.CandidateId)
 	}
 
-	reply.Term = rf.currentTerm
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
@@ -107,6 +109,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.state = "Follower"
 		rf.persist()
 		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+		rf.heartbeatTimer.Stop()
 
 		// 比较日志
 		// if args.PrevLogIndex >= len(rf.logs) || rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {

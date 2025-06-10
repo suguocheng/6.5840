@@ -242,7 +242,7 @@ func (rf *Raft) BroadcastHeartbeat(isHeartbeat bool) {
 		}
 		if isHeartbeat {
 			// should send heartbeat to all peers immediately
-			go rf.broadcastAppendEntries(true, peer)
+			go rf.broadcastAppendEntries(peer)
 		} else {
 			// just need to signal replicator to send log entries to peer
 			rf.replicatorCond[peer].Signal()
@@ -265,12 +265,12 @@ func (rf *Raft) replicator(peer int) {
 			rf.replicatorCond[peer].Wait()
 		}
 		// send log entries to peer
-		rf.broadcastAppendEntries(false, peer)
+		rf.broadcastAppendEntries(peer)
 	}
 }
 
-func (rf *Raft) broadcastAppendEntries(isHeartbeat bool, i int) {
-	DPrintf("Leader %d send RPC to %d, Term %d, isHeartbeat %v", rf.me, i, rf.currentTerm, isHeartbeat)
+func (rf *Raft) broadcastAppendEntries(i int) {
+	DPrintf("Leader %d send RPC to %d, Term %d", rf.me, i, rf.currentTerm)
 	term := rf.currentTerm
 
 	rf.mu.RLock()
@@ -316,10 +316,10 @@ func (rf *Raft) broadcastAppendEntries(isHeartbeat bool, i int) {
 	} else {
 		prevLogTerm := rf.logs[prevLogIndex-rf.getFirstLog().Index].Term
 		var entries []LogEntry
-		if !isHeartbeat {
-			entries = make([]LogEntry, len(rf.logs[prevLogIndex-rf.getFirstLog().Index+1:]))
-			copy(entries, rf.logs[prevLogIndex-rf.getFirstLog().Index+1:])
-		}
+		// if !isHeartbeat {
+		entries = make([]LogEntry, len(rf.logs[prevLogIndex-rf.getFirstLog().Index+1:]))
+		copy(entries, rf.logs[prevLogIndex-rf.getFirstLog().Index+1:])
+		// }
 
 		args := AppendEntriesArgs{
 			Term:         term,
@@ -536,6 +536,7 @@ func (rf *Raft) startElection() {
 						rf.voteFor = -1
 						rf.persist()
 						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+						rf.heartbeatTimer.Stop()
 					}
 				}
 				rf.mu.Unlock()
@@ -560,31 +561,28 @@ func (rf *Raft) startElection() {
 // for any long-running work.
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
-	rf := &Raft{}
-	rf.mu = sync.RWMutex{}
-	rf.peers = peers
-	rf.persister = persister
-	rf.me = me
-
-	// Your initialization code here (3A, 3B, 3C).
-	rf.currentTerm = 0
-	rf.voteFor = -1
-	rf.logs = make([]LogEntry, 1)
-	rf.commitIndex = 0
-	rf.lastApplied = 0
-	rf.nextIndex = make([]int, len(peers))
-	rf.matchIndex = make([]int, len(peers))
-	rf.state = "Follower"
-	rf.electionTimer = time.NewTimer(time.Duration(randomInRange(1000, 2000)) * time.Millisecond)
-	rf.heartbeatTimer = time.NewTimer(time.Duration(125) * time.Millisecond)
-	rf.heartbeatTimer.Stop()
-
-	rf.applyCh = applyCh
-	rf.applyCond = sync.NewCond(&rf.mu)
-	rf.replicatorCond = make([]*sync.Cond, len(peers))
-
-	// initialize from state persisted before a crash
+	rf := &Raft{
+		mu:             sync.RWMutex{},
+		peers:          peers,
+		persister:      persister,
+		me:             me,
+		dead:           0,
+		currentTerm:    0,
+		voteFor:        -1,
+		logs:           make([]LogEntry, 1), // dummy entry at index 0
+		commitIndex:    0,
+		lastApplied:    0,
+		nextIndex:      make([]int, len(peers)),
+		matchIndex:     make([]int, len(peers)),
+		state:          "Follower",
+		electionTimer:  time.NewTimer(time.Duration(randomInRange(1000, 2000)) * time.Millisecond),
+		heartbeatTimer: time.NewTimer(time.Duration(125) * time.Millisecond),
+		applyCh:        applyCh,
+		replicatorCond: make([]*sync.Cond, len(peers)),
+	}
 	rf.readPersist(persister.ReadRaftState())
+
+	rf.applyCond = sync.NewCond(&rf.mu)
 
 	for peer := range peers {
 		rf.matchIndex[peer], rf.nextIndex[peer] = 0, rf.getLastLog().Index+1
