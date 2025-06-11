@@ -301,7 +301,7 @@ func (rf *Raft) broadcastAppendEntries(i int) {
 					rf.state = "Follower"
 					rf.voteFor = -1
 					rf.persist()
-					resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+					resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 					rf.heartbeatTimer.Stop()
 
 				} else {
@@ -346,7 +346,7 @@ func (rf *Raft) broadcastAppendEntries(i int) {
 				rf.state = "Follower"
 				rf.voteFor = -1
 				rf.persist()
-				resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+				resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 				rf.heartbeatTimer.Stop()
 
 			} else {
@@ -462,7 +462,7 @@ func (rf *Raft) ticker() {
 		case <-rf.electionTimer.C:
 			rf.startElection()
 			if rf.state != "Leader" {
-				resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+				resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 			}
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
@@ -535,7 +535,7 @@ func (rf *Raft) startElection() {
 						rf.state = "Follower"
 						rf.voteFor = -1
 						rf.persist()
-						resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+						resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 						rf.heartbeatTimer.Stop()
 					}
 				}
@@ -580,8 +580,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		applyCh:        applyCh,
 		replicatorCond: make([]*sync.Cond, len(peers)),
 	}
-	rf.readPersist(persister.ReadRaftState())
 
+	rf.readPersist(persister.ReadRaftState())
 	rf.applyCond = sync.NewCond(&rf.mu)
 
 	for peer := range peers {

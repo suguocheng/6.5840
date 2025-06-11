@@ -69,7 +69,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.voteFor = -1
 		rf.state = "Follower"
 		rf.persist()
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+		resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 		rf.heartbeatTimer.Stop()
 	}
 
@@ -79,7 +79,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.voteFor = args.CandidateId
 		reply.VoteGranted = true
 		rf.persist()
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+		resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 
 		DPrintf("Follower %d vote for Candidate %d", rf.me, args.CandidateId)
 	} else {
@@ -108,7 +108,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.voteFor = -1
 		rf.state = "Follower"
 		rf.persist()
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+		resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 		rf.heartbeatTimer.Stop()
 
 		// 比较日志
@@ -234,7 +234,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.voteFor = -1
 		rf.state = "Follower"
 		rf.persist()
-		resetTimer(rf.electionTimer, time.Duration(randomInRange(500, 1000))*time.Millisecond)
+		resetTimer(rf.electionTimer, time.Duration(randomInRange(1000, 2000))*time.Millisecond)
 		rf.heartbeatTimer.Stop()
 
 		// check the snapshot is more up-to-date than the current log
